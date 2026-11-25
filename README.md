@@ -32,9 +32,10 @@ kubedog
 It needs a desktop (X11 or Wayland) with OpenGL or Vulkan, and glibc 2.28 or newer (Debian 10, Ubuntu 18.10,
 RHEL 8 and later).
 
-### Windows (64-bit)
+### Windows
 
-Download `kubedog-<version>-windows-amd64.zip` from [Releases](../../releases), unpack it and start `kubedog.exe`.
+Download `kubedog-<version>-windows-amd64.zip` (Intel or AMD; `-arm64` for an ARM computer such as a Snapdragon
+laptop) from [Releases](../../releases), unpack it and start `kubedog.exe`.
 Windows may say the publisher is unknown: the program isn't signed yet. Choose "More info", then "Run anyway".
 
 ### macOS, by hand
@@ -62,7 +63,7 @@ shasum -a 256 -c SHA256SUMS --ignore-missing
 |---|---|
 | macOS, Apple silicon | Built and used daily |
 | Linux, amd64 and arm64 | Built, and seen to start on Debian 11; its window hasn't been looked at yet. Some parts are still written for macOS (opening an outside terminal app, the file chooser) |
-| Windows, amd64 | Built, **not yet tried on a Windows computer**. Expect rough edges; the built-in shell and outside terminals are written for macOS |
+| Windows, amd64 and arm64 | Built, **not yet tried on a Windows computer**. Expect rough edges; the built-in shell and outside terminals are written for macOS |
 
 ## Licence
 
