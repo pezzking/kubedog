@@ -34,8 +34,8 @@ RHEL 8 and later).
 
 ### Windows
 
-Download `kubedog-<version>-windows-amd64-setup.exe` (Intel or AMD; `-arm64-setup.exe` for an ARM computer such as
-a Snapdragon laptop) from [Releases](../../releases) and run it. It installs for you alone, without an
+Download `kubedog-<version>-windows-setup.exe` from [Releases](../../releases) and run it. It's one file for every
+64-bit Windows computer (Intel, AMD or ARM) and installs the program that fits. It installs for you alone, without an
 administrator, and adds Kubedog to the Start menu; remove it again under Settings > Apps > Installed apps.
 
 Windows may say the publisher is unknown: the program isn't signed yet. Choose "More info", then "Run anyway".
@@ -43,7 +43,8 @@ Windows may say the publisher is unknown: the program isn't signed yet. Choose "
 Kubedog reaches clusters through `kubectl`. It uses yours when you have one (or OpenShift's `oc`); the installer
 brings a `kubectl` along for computers that have none.
 
-Without installing: the `.zip` next to it holds the same `kubedog.exe`, without `kubectl`.
+Without installing: the `.zip` files hold the same `kubedog.exe`, without `kubectl`. Take `-x64` for Intel or
+AMD (nearly every PC) and `-arm64` for an ARM computer such as a Snapdragon laptop; the wrong one gives "This app can't run on your PC".
 
 ### macOS, by hand
 
@@ -61,7 +62,7 @@ xattr -dr com.apple.quarantine kubedog-*/
 Nothing is downloaded while installing or afterwards, and Kubedog never calls home: no update check, no
 statistics. Its AI help is off until you switch it on, and can be pointed at a model inside your own network.
 
-- **Windows:** carry `kubedog-<version>-windows-<amd64|arm64>-setup.exe` and `SHA256SUMS` inside. The installer
+- **Windows:** carry `kubedog-<version>-windows-setup.exe` and `SHA256SUMS` inside. The installer
   holds everything, `kubectl` included, and needs no administrator.
 - **Linux and macOS:** carry the `.tar.gz` and `SHA256SUMS` inside and install by hand as above. `kubectl` or `oc`
   has to be on the computer already. Homebrew needs the internet, so it isn't the way here.
