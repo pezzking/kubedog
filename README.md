@@ -8,7 +8,7 @@ This repository holds the downloads. Every version is under [Releases](../../rel
 
 ## Install
 
-You need `kubectl` on your `PATH`.
+You need `kubectl` (or OpenShift's `oc`) on your `PATH`; the Windows installer brings one along.
 
 ### macOS (Apple silicon) and Linux, with Homebrew
 
@@ -34,9 +34,16 @@ RHEL 8 and later).
 
 ### Windows
 
-Download `kubedog-<version>-windows-amd64.zip` (Intel or AMD; `-arm64` for an ARM computer such as a Snapdragon
-laptop) from [Releases](../../releases), unpack it and start `kubedog.exe`.
+Download `kubedog-<version>-windows-amd64-setup.exe` (Intel or AMD; `-arm64-setup.exe` for an ARM computer such as
+a Snapdragon laptop) from [Releases](../../releases) and run it. It installs for you alone, without an
+administrator, and adds Kubedog to the Start menu; remove it again under Settings > Apps > Installed apps.
+
 Windows may say the publisher is unknown: the program isn't signed yet. Choose "More info", then "Run anyway".
+
+Kubedog reaches clusters through `kubectl`. It uses yours when you have one (or OpenShift's `oc`); the installer
+brings a `kubectl` along for computers that have none.
+
+Without installing: the `.zip` next to it holds the same `kubedog.exe`, without `kubectl`.
 
 ### macOS, by hand
 
@@ -48,6 +55,18 @@ tar xzf kubedog-*-macos-arm64.tar.gz
 xattr -dr com.apple.quarantine kubedog-*/
 ./kubedog-*/kubedog
 ```
+
+## Without internet (air-gapped)
+
+Nothing is downloaded while installing or afterwards, and Kubedog never calls home: no update check, no
+statistics. Its AI help is off until you switch it on, and can be pointed at a model inside your own network.
+
+- **Windows:** carry `kubedog-<version>-windows-<amd64|arm64>-setup.exe` and `SHA256SUMS` inside. The installer
+  holds everything, `kubectl` included, and needs no administrator.
+- **Linux and macOS:** carry the `.tar.gz` and `SHA256SUMS` inside and install by hand as above. `kubectl` or `oc`
+  has to be on the computer already. Homebrew needs the internet, so it isn't the way here.
+
+Check the file after carrying it over, as below.
 
 ## Check a download
 

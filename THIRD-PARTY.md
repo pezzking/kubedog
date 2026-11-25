@@ -32,6 +32,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## kubectl
+
+The Windows installers can bring `kubectl.exe` along, for computers that have none. It's the unchanged program
+from the Kubernetes project (<https://kubernetes.io>, Apache License 2.0, the same licence as in `LICENSE`),
+taken from its own downloads and checked against its published checksum when a release is made.
+
 ## Fonts
 
 The fonts that can be chosen in Settings come with Kubedog, each under the SIL Open Font License 1.1. The full text
