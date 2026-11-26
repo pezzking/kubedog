@@ -7282,7 +7282,14 @@ impl eframe::App for KubedogApp {
             .default_size(u(SIDEBAR_WIDTH) * wide)
             .size_range(180.0..=480.0)
             .frame(Frame::new().fill(BG_DEFAULT()).inner_margin(Margin { left: 12, right: 12, top: 0, bottom: 0 }).stroke(Stroke::new(1.0, BORDER_SUBTLE())))
-            .show(ui, |ui| base_size(ui, |ui| self.sidebar(ui)));
+            .show(ui, |ui| {
+                // What's drawn never makes the sidebar wider: on a screen scaled by 125% or 150% a row can come out a
+                // fraction too wide, and the divider would then creep to the right by itself. Only dragging moves it.
+                let room = ui.available_rect_before_wrap();
+                let mut inside = ui.new_child(egui::UiBuilder::new().max_rect(room).layout(Layout::top_down(Align::Min)));
+                base_size(&mut inside, |ui| self.sidebar(ui));
+                ui.allocate_rect(room, Sense::hover());
+            });
 
         if self.screenshot.is_some() && self.ai.chat.is_none() && std::env::var("KUBEDOG_SHOT_AI").map(|v| v == "chat").unwrap_or(false) {
             self.ai_canned_chat();
