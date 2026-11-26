@@ -123,6 +123,10 @@ The short version is in the [README](../README.md). This is the whole list.
   (changes still ask before they're done).
 - **Favorites:** a star on every page of the sidebar (shown under the mouse) puts it in Favorites at the top; starred
   namespaces are first in the namespace menu and starred on the Namespaces page.
+- **A newer version is told, not installed** (Settings > About): once a day Kubedog asks github.com which version is
+  the newest; nothing about you or your clusters is sent. When yours is older, the top bar says so, and Settings > About
+  gives the Homebrew line to run or opens the download page. One version can be skipped, the look can be switched off,
+  and without internet nothing happens.
 - **Settings as a file** (Settings > General): everything from Settings written to one file, the namespaces listed per
   cluster included, and read in again on another computer or after a reinstall. No password or key is in it. What a
   file never changes: your kubeconfig files (they go along by where they are, and are added when they're there),

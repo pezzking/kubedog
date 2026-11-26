@@ -54,6 +54,7 @@ mod nethelp;
 mod picks;
 mod shells;
 mod backup;
+mod update;
 mod side;
 mod rowmenu;
 mod favs;
@@ -493,6 +494,7 @@ pub struct KubedogApp {
     menu_row: Option<picks::Key3>,
     shells: shells::Shells,
     backup: backup::Backup,
+    update: update::Update,
     catalog: oscatalog::Catalog,
     incident: incident::Room,
     ready: readiness::Ready,
@@ -629,6 +631,7 @@ impl KubedogApp {
             menu_row: None,
             shells: Default::default(),
             backup: Default::default(),
+            update: Default::default(),
             catalog: Default::default(),
             incident: Default::default(),
             ready: Default::default(),
@@ -2546,6 +2549,11 @@ pub(crate) struct Prefs {
     /// Filter link on: one filter shared by every page except Nodes (which keeps its own).
     /// Off: a page's filter is cleared when you leave it.
     shared_filter: bool,
+    /// Look for a newer Kubedog once a day; when GitHub last answered, what it named, and the version not to remind of.
+    update_check: bool,
+    update_last: i64,
+    update_latest: String,
+    update_skip: String,
     /// Kubeconfig files Kubedog reads, in order (first one wins on a name clash).
     kubeconfigs: Vec<KubeFile>,
     /// Contexts hidden from the start page (Kubedog only; the files aren't touched).
@@ -2645,6 +2653,10 @@ impl Default for Prefs {
             terminal: "builtin".into(),
             terminal_chosen: false,
             shared_filter: true,
+            update_check: true,
+            update_last: 0,
+            update_latest: String::new(),
+            update_skip: String::new(),
             kubeconfigs: vec![],
             hidden_contexts: vec![],
             startup: "reconnect".into(),
@@ -2708,6 +2720,10 @@ fn prefs_from_json(v: &Value) -> Prefs {
         terminal: if terminal_chosen { v["terminal"].as_str().map(String::from).unwrap_or(d.terminal) } else { d.terminal },
         terminal_chosen,
         shared_filter: v["shared_filter"].as_bool().or(v["keep_filters"].as_bool()).unwrap_or(d.shared_filter),
+        update_check: v["update_check"].as_bool().unwrap_or(true),
+        update_last: v["update_last"].as_i64().unwrap_or(0),
+        update_latest: v["update_latest"].as_str().unwrap_or("").to_string(),
+        update_skip: v["update_skip"].as_str().unwrap_or("").to_string(),
         kubeconfigs: v["kubeconfigs"]
             .as_array()
             .map(|a| {
@@ -2829,6 +2845,10 @@ fn prefs_to_json(p: &Prefs) -> Value {
         "terminal": p.terminal,
         "terminal_chosen": p.terminal_chosen,
         "shared_filter": p.shared_filter,
+        "update_check": p.update_check,
+        "update_last": p.update_last,
+        "update_latest": p.update_latest,
+        "update_skip": p.update_skip,
         "kubeconfigs": p.kubeconfigs.iter().map(|f| serde_json::json!({"path": f.path, "enabled": f.enabled, "managed": f.managed})).collect::<Vec<_>>(),
         "hidden_contexts": p.hidden_contexts,
         "sidebar": p.sidebar,
@@ -4147,6 +4167,7 @@ impl KubedogApp {
                     }
                 }
                 self.ai_top(ui);
+                self.update_top(ui);
                 if columns::top_icon(ui, false, columns::draw_refresh).on_hover_text("Refresh (⌘R)").clicked() {
                     self.refresh_current(true);
                 }
@@ -7300,6 +7321,7 @@ impl eframe::App for KubedogApp {
         self.menu_commands(&ctx);
         self.remember_session(&ctx);
         self.companion_tick();
+        self.update_tick();
         self.maybe_screenshot(&ctx);
         self.shortcuts(&ctx);
         if !self.demo && !self.contexts_loading && self.connected {

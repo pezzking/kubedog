@@ -501,6 +501,7 @@ impl KubedogApp {
             kv(ui, "Settings file", prefs_path().map(|p| clusters::short_path(&p.to_string_lossy())).unwrap_or_default());
             kv(ui, "Thanks to", "PathViz by Ivan Velichko (MIT licence): parts of the packet decoder began there; see THIRD-PARTY.md");
         });
+        self.settings_update(ui);
     }
 }
 

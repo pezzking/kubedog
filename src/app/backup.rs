@@ -5,7 +5,7 @@ use work::said;
 
 /// What stays with the computer it was made on: what was open, where its programs are, which logins its keychain
 /// holds, and which clusters start with changes allowed (a file never takes protection away).
-const LOCAL: [&str; 7] = ["kubeconfigs", "session", "contexts", "kubectl_path", "logins", "open_at_start", "open_all"];
+const LOCAL: [&str; 10] = ["kubeconfigs", "session", "contexts", "kubectl_path", "logins", "open_at_start", "open_all", "update_last", "update_latest", "update_skip"];
 
 #[derive(Default)]
 pub(super) struct Backup {
@@ -38,6 +38,10 @@ pub(super) fn import_into(now: &Prefs, file: &Value, exists: &dyn Fn(&str) -> bo
     // AI is only ever switched on by hand, on the computer it runs on.
     if !now.ai.on {
         j["ai"]["on"] = false.into();
+    }
+    // Nor does a file make this computer ask the internet for anything it was told not to.
+    if !now.update_check {
+        j["update_check"] = false.into();
     }
     let (mut added, mut gone) = (0, 0);
     let mut files = j["kubeconfigs"].as_array().cloned().unwrap_or_default();
@@ -94,7 +98,7 @@ impl KubedogApp {
                 let what = what.clone();
                 ui.add_space(8.0);
                 said(ui, &what, TEXT_DEFAULT());
-                settings::hint(ui, "Your settings are replaced by the file's. What stays as it is here: your kubeconfig files, logins, which clusters start with changes allowed, and AI stays off unless it's on here.");
+                settings::hint(ui, "Your settings are replaced by the file's. What stays as it is here: your kubeconfig files, logins, which clusters start with changes allowed, and AI and the look for a new version stay off unless they're on here.");
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if button(ui, "Replace my settings", true, false) {
@@ -199,6 +203,14 @@ mod tests {
         let (got, said) = import_into(&here, &file, &|_| false).unwrap();
         assert!(got.kubeconfigs.len() == 1 && said.contains("1 kubeconfig files that aren't on this computer"), "{said}");
 
+        // The look for a new version isn't switched on by a file either; switching it off is taken over.
+        here.update_check = false;
+        assert!(!import_into(&here, &file, &|_| false).unwrap().0.update_check);
+        here.update_check = true;
+        let mut off = file.clone();
+        off["settings"]["update_check"] = false.into();
+        assert!(!import_into(&here, &off, &|_| false).unwrap().0.update_check);
+        assert!(import_into(&here, &file, &|_| false).unwrap().0.update_check);
         // Where AI is on already, the file's AI settings are taken as they are.
         here.ai.on = true;
         assert!(import_into(&here, &file, &|_| false).unwrap().0.ai.on);

@@ -16,7 +16,7 @@ A fast desktop app for Kubernetes clusters, for macOS, Windows and Linux. It tal
 - **Several clusters side by side**, each with its own colour in every list.
 - **Superpowers:** pages that answer a question (what changed, is the network well, can this be upgraded), and pages
   for what runs in a cluster, such as Argo CD, OpenShift and Postgres. See [below](#superpowers).
-- **Works without internet.** Nothing is downloaded after installing, there's no update check and no statistics.
+- **Works without internet.** Nothing is downloaded after installing and there are no statistics. Once a day it asks github.com for the newest version number, which can be switched off.
 - **AI help only if you want it.** It's off until you switch it on, and you decide what may be sent and where.
 
 Everything it does is in [docs/FEATURES.md](docs/FEATURES.md).
@@ -126,8 +126,11 @@ for Elasticsearch and Pulsar.
 
 ## Without internet (air-gapped)
 
-Nothing is downloaded while installing or afterwards, and Kubedog never calls home: no update check, no
-statistics. Its AI help is off until you switch it on, and can be pointed at a model inside your own network.
+Nothing is downloaded while installing or afterwards, and Kubedog keeps no statistics. One thing is asked from the
+internet without a click: once a day, github.com is asked which Kubedog version is the newest, so it can tell you
+when yours is old. Nothing about you, your computer or your clusters is sent, nothing is installed by itself, and
+without internet nothing happens. Switch it off in Settings > About. Its AI help is off until you switch it on, and
+can be pointed at a model inside your own network.
 
 - **Windows:** carry `kubedog-<version>-windows-setup.exe` and `SHA256SUMS` inside. The installer
   holds everything, `kubectl` included, and needs no administrator.
