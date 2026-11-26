@@ -53,6 +53,7 @@ mod packets;
 mod nethelp;
 mod picks;
 mod shells;
+mod backup;
 mod side;
 mod rowmenu;
 mod favs;
@@ -491,6 +492,7 @@ pub struct KubedogApp {
     /// The row whose right-click menu is open: it stays marked while the mouse is in the menu.
     menu_row: Option<picks::Key3>,
     shells: shells::Shells,
+    backup: backup::Backup,
     catalog: oscatalog::Catalog,
     incident: incident::Room,
     ready: readiness::Ready,
@@ -626,6 +628,7 @@ impl KubedogApp {
             picks: Default::default(),
             menu_row: None,
             shells: Default::default(),
+            backup: Default::default(),
             catalog: Default::default(),
             incident: Default::default(),
             ready: Default::default(),
@@ -3612,7 +3615,9 @@ impl KubedogApp {
         let label = if self.active.len() == 1 { ctx_label(&self.active[0]) } else { format!("{} clusters", self.active.len()) };
         let all_locked = self.active.iter().all(|c| !self.unlocked.contains(c));
         ui.horizontal(|ui| {
-            let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width() - 24.0, 32.0), Sense::click());
+            // The name takes what the padlock leaves: together they are exactly as wide as the sidebar.
+            let lock_w = z(18.0);
+            let (r, resp) = ui.allocate_exact_size(egui::vec2((ui.available_width() - lock_w - ui.spacing().item_spacing.x).max(40.0), 32.0), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(r, CornerRadius::same(6), BG_HOVER());
             }
@@ -3623,7 +3628,7 @@ impl KubedogApp {
             if resp.on_hover_text(format!("{}\nClick to switch contexts", self.active.join("\n"))).clicked() {
                 self.disconnect();
             }
-            let (spot, lock) = ui.allocate_exact_size(egui::vec2(z(18.0), z(18.0)), Sense::click());
+            let (spot, lock) = ui.allocate_exact_size(egui::vec2(lock_w, z(18.0)), Sense::click());
             padlock(ui.painter(), spot.center(), z(13.0), all_locked, if all_locked { TEXT_SUBTLE() } else { WARNING() });
             if lock
                 .on_hover_text(if all_locked {

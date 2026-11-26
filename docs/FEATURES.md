@@ -118,6 +118,11 @@ The short version is in the [README](../README.md). This is the whole list.
   (changes still ask before they're done).
 - **Favorites:** a star on every page of the sidebar (shown under the mouse) puts it in Favorites at the top; starred
   namespaces are first in the namespace menu and starred on the Namespaces page.
+- **Settings as a file** (Settings > General): everything from Settings written to one file, the namespaces listed per
+  cluster included, and read in again on another computer or after a reinstall. No password or key is in it. What a
+  file never changes: your kubeconfig files (they go along by where they are, and are added when they're there),
+  your logins, which clusters start with changes allowed, and AI stays off unless it's on already. You're shown what
+  the file holds and asked before anything changes.
 - **Settings > Sidebar:** the order of the menu on the left, by dragging or with arrows.
 - **Settings > Superpowers:** Auto, On or Off for each; Off reads nothing for it.
 - **Superpowers:** a sidebar section under Workloads with what the open clusters really have:

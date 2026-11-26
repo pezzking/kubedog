@@ -209,6 +209,7 @@ impl KubedogApp {
         if changed {
             self.save();
         }
+        self.settings_backup(ui);
     }
 
     fn settings_clusters(&mut self, ui: &mut Ui) {
