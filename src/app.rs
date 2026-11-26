@@ -2149,6 +2149,26 @@ fn measure_columns(ui: &Ui, kind: Kind, rows: &[(String, Row)]) -> HashMap<Strin
     out
 }
 
+/// The room the context's colour stripe takes before its name.
+const CTX_STRIPE: f32 = 20.0;
+
+/// The Context and Namespace columns are as wide as their longest name (or their header), up to a limit:
+/// a cluster called "P" doesn't need the room of a long name. `text` is the measured width, padding included.
+fn snug_width(text: f32, stripe: bool) -> f32 {
+    (text + if stripe { CTX_STRIPE } else { 0.0 }).min(z(360.0))
+}
+
+/// As `measure_columns`, for one column of a table that has no cache: the width of its header or its longest text.
+fn measure_texts<'a>(ui: &Ui, header: &str, texts: impl Iterator<Item = &'a str>) -> f32 {
+    let font = egui::FontId::proportional(z(14.0));
+    let mut longest: Vec<&str> = texts.collect();
+    longest.sort_by_key(|t| std::cmp::Reverse(t.chars().count()));
+    longest.dedup();
+    longest.truncate(4);
+    let wide = |t: String| ui.ctx().fonts_mut(|f| f.layout_no_wrap(t, font.clone(), Color32::WHITE).size().x);
+    longest.into_iter().map(|t| wide(t.to_string())).fold(wide(format!("{header}  ")), f32::max) + 14.0
+}
+
 /// Share `room` among the columns: each starts at its usual width; spare room then goes to the
 /// columns whose text is cut off, evenly, so short cut-off columns are shown in full first.
 /// The last column takes whatever is left (it fills the rest of the window anyway).
@@ -4420,8 +4440,13 @@ impl KubedogApp {
                 base[i] = want[i].clamp(base_column_width(h), z(140.0));
             }
         }
-        // As wide as its buttons (or its name, if that's wider).
         let mut want = want;
+        // Context and Namespace: as wide as the longest name shown, not a fixed width.
+        for (i, h) in headers.iter().enumerate().filter(|(_, h)| matches!(**h, "Context" | "Namespace")) {
+            base[i] = snug_width(want[i], *h == "Context");
+            want[i] = base[i];
+        }
+        // As wide as its buttons (or its name, if that's wider).
         let controls_w = (n_controls as f32 * 30.0 + 6.0).max(z(72.0));
         for (i, h) in headers.iter().enumerate().filter(|(_, h)| **h == "Controls") {
             base[i] = controls_w;
@@ -5360,9 +5385,14 @@ impl KubedogApp {
             headers.push("Context");
         }
         headers.extend(["Name", "Namespace", "Revision", "Status", "Chart", "App Version", "Updated", ""]);
+        let ctx_names: Vec<String> = if multi { rows.iter().map(|r| ctx_label(&r.0)).collect() } else { vec![] };
+        let ctx_w = snug_width(measure_texts(ui, "Context", ctx_names.iter().map(|s| s.as_str())), false);
+        let ns_w = snug_width(measure_texts(ui, "Namespace", rows.iter().filter_map(|r| r.1["namespace"].as_str())), false);
         let mut tb = TableBuilder::new(ui).striped(false).resizable(false).cell_layout(Layout::left_to_right(Align::Center));
         for h in &headers {
             tb = tb.column(match *h {
+                "Context" => Column::initial(ctx_w).clip(true),
+                "Namespace" => Column::initial(ns_w).clip(true),
                 "Name" | "Chart" => Column::initial(220.0).clip(true),
                 "Updated" => Column::initial(200.0).clip(true),
                 "" => Column::remainder(),
@@ -7658,6 +7688,16 @@ fn demo_logs() -> Vec<LogLine> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn context_and_namespace_columns_follow_their_names() {
+        use super::*;
+        // A short name gives a narrow column, the stripe's room included; a very long one stops at the limit.
+        assert_eq!(snug_width(30.0, false), 30.0);
+        assert_eq!(snug_width(30.0, true), 30.0 + CTX_STRIPE);
+        assert!(snug_width(30.0, true) < base_column_width("Context"));
+        assert_eq!(snug_width(5000.0, true), z(360.0));
+    }
+
     #[test]
     fn keys_and_mouse_go_back() {
         use super::*;

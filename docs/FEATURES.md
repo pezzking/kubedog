@@ -15,6 +15,7 @@ The short version is in the [README](../README.md). This is the whole list.
     drag rows to order them and tick them to show them (or drag the table's headers). Extra columns
     are available, such as CPU and memory requests and limits, images and labels.
   - Column widths that use the room a big window gives.
+  - The Context and Namespace columns are as wide as the longest name in them, so short names leave the room to the rest.
 - **Object pages:** Overview, YAML, Events (only for kinds that have events) and Logs.
   - **Pods:** whether it's well and why not, its conditions, a live X-ray (ingresses and routes, the
     services behind them, its containers as tanks of memory, what they hold; all of it clickable), a card per container (CPU, memory, what's asked for

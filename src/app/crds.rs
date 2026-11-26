@@ -593,13 +593,16 @@ impl KubedogApp {
         let mut sort_click: Option<usize> = None;
         let line = Stroke::new(1.0, BORDER_SUBTLE());
         let n = headers.len();
+        let ctx_names: Vec<String> = if multi { rows.iter().map(|r| ctx_label(&r.ctx)).collect() } else { vec![] };
+        let ctx_w = snug_width(measure_texts(ui, "Context", ctx_names.iter().map(|s| s.as_str())), true);
+        let ns_w = snug_width(measure_texts(ui, "Namespace", rows.iter().map(|r| r.ns.as_str())), false);
         let area = egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
             let mut tb = TableBuilder::new(ui).striped(false).resizable(false).sense(Sense::click()).cell_layout(Layout::left_to_right(Align::Center)).min_scrolled_height(0.0);
             for (i, (h, _)) in headers.iter().enumerate() {
                 let w = match h.as_str() {
                     "Name" => 300.0,
-                    "Namespace" => 170.0,
-                    "Context" => 130.0,
+                    "Namespace" => ns_w,
+                    "Context" => ctx_w,
                     "Repository" | "Message" | "Status" => 240.0,
                     "Age" => 80.0,
                     "" => 30.0,
