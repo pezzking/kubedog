@@ -75,10 +75,14 @@ fn search_paths() -> Vec<PathBuf> {
     v
 }
 
-/// A kubectl in Kubedog's own folder, next to the program.
-fn beside_kubedog() -> Option<PathBuf> {
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    Some(dir.join(if cfg!(windows) { "kubectl.exe" } else { "kubectl" })).filter(|p| p.is_file())
+/// Kubedog's own folder, where the Windows installer puts the programs it brings along.
+fn own_dir() -> Option<PathBuf> {
+    Some(std::env::current_exe().ok()?.parent()?.to_path_buf())
+}
+
+/// A program in Kubedog's own folder, next to Kubedog itself.
+fn beside_kubedog(name: &str) -> Option<PathBuf> {
+    Some(own_dir()?.join(if cfg!(windows) { format!("{name}.exe") } else { name.to_string() })).filter(|p| p.is_file())
 }
 
 pub fn find_program(name: &str) -> Option<PathBuf> {
@@ -92,8 +96,10 @@ pub fn find_program(name: &str) -> Option<PathBuf> {
 /// PATH for child processes: a Finder-launched app gets a bare PATH, but
 /// kubeconfig credential plugins (aws, gcloud, oc...) need the usual dirs.
 pub fn child_path() -> String {
+    // Kubedog's own folder last: kubectl finds a plugin that came with Kubedog (cnpg) there, and yours goes first.
     let parts: Vec<String> = search_paths()
         .into_iter()
+        .chain(own_dir())
         .map(|p| p.to_string_lossy().to_string())
         .collect();
     parts.join(&LIST_SEP.to_string())
@@ -108,7 +114,7 @@ impl Kubectl {
             // OpenShift's own program takes the same commands; closed-off networks often have only that one.
             .or_else(|| find_program("oc"))
             // The one that came with Kubedog (the Windows installer can bring it), when the computer has none.
-            .or_else(beside_kubedog)
+            .or_else(|| beside_kubedog("kubectl"))
             // For trying what a computer without kubectl sees.
             .filter(|_| std::env::var_os("KUBEDOG_NO_KUBECTL").is_none());
         let kubeconfig = std::env::var("KUBEDOGCONFIG")
@@ -119,7 +125,7 @@ impl Kubectl {
             bin,
             kubeconfig,
             helm: find_program("helm"),
-            cnpg: find_program("kubectl-cnpg"),
+            cnpg: find_program("kubectl-cnpg").or_else(|| beside_kubedog("kubectl-cnpg")),
         }
     }
 

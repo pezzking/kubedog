@@ -94,13 +94,24 @@ Section "kubectl ${KUBECTL_VERSION}" SecKubectl
     ${EndIf}
 SectionEnd
 
+Section "kubectl cnpg ${CNPG_VERSION} (for Postgres)" SecCnpg
+    SetOutPath "$INSTDIR"
+    ${If} ${IsNativeARM64}
+        File "/oname=kubectl-cnpg.exe" "${CNPG_ARM64}"
+    ${Else}
+        File "/oname=kubectl-cnpg.exe" "${CNPG_AMD64}"
+    ${EndIf}
+SectionEnd
+
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "The program itself."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecKubectl} "Kubedog reaches clusters through kubectl. This copy is only used when the computer has no kubectl or oc of its own; yours always goes first."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecCnpg} "The CloudNativePG plugin for kubectl. Kubedog's Postgres page uses it for the live state of a database cluster. This copy is only used when the computer has none of its own."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
     Delete "$INSTDIR\kubectl.exe"
+    Delete "$INSTDIR\kubectl-cnpg.exe"
     Delete "$SMPROGRAMS\Kubedog.lnk"
     Delete "$INSTDIR\kubedog.exe"
     Delete "$INSTDIR\LICENSE"

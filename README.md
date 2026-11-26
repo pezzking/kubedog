@@ -94,7 +94,8 @@ administrator, and adds Kubedog to the Start menu; remove it again under Setting
 Windows may say the publisher is unknown: the program isn't signed yet. Choose "More info", then "Run anyway".
 
 Kubedog reaches clusters through `kubectl`. It uses yours when you have one (or OpenShift's `oc`); the installer
-brings a `kubectl` along for computers that have none.
+brings a `kubectl` along for computers that have none, and the CloudNativePG plugin (`kubectl cnpg`) for the Postgres
+page. Other tools, such as `helm` and `argocd`, are yours to install; in a WSL Linux, all of them are.
 
 Without installing: the `.zip` files hold the same `kubedog.exe`, without `kubectl`. Take `-x64` for Intel or
 AMD (nearly every PC) and `-arm64` for an ARM computer such as a Snapdragon laptop; the wrong one gives "This app can't run on your PC".

@@ -25,6 +25,7 @@ GH_REPO="${KUBEDOG_GH_REPO:-pezzking/kubedog}"      # the source and the downloa
 TAP_REPO="${KUBEDOG_TAP_REPO:-pezzking/homebrew-tap}" # brew install pezzking/tap/kubedog
 GLIBC=2.28                                            # the oldest Linux the builds run on
 KUBECTL_VERSION="${KUBEDOG_KUBECTL_VERSION:-v1.37.2}"  # the kubectl inside the Windows installers; raise it with a release
+CNPG_VERSION="${KUBEDOG_CNPG_VERSION:-1.30.2}"         # the kubectl cnpg plugin (CloudNativePG) inside the Windows installer
 
 BUNDLE_ID="io.github.pezzking.kubedog"
 NOTARY="${KUBEDOG_NOTARY_PROFILE:-kubedog-notary}"     # the name the login for Apple's check is kept under
@@ -200,6 +201,23 @@ kubectl_for() { # kubectl_for <amd64|arm64>
 kubectl_for amd64
 kubectl_for arm64
 
+say "kubectl cnpg $CNPG_VERSION for the Windows installer"
+# From CloudNativePG's own release, checked against the checksums published with it. Kept between runs as well.
+cnpg_for() { # cnpg_for <x86_64|arm64>
+    local dir="$ROOT/target/cnpg/$CNPG_VERSION/$1" file="kubectl-cnpg_${CNPG_VERSION}_windows_$1.tar.gz"
+    local base="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v$CNPG_VERSION"
+    mkdir -p "$dir"
+    [ -s "$dir/$file" ] || curl -fsSL "$base/$file" -o "$dir/$file"
+    [ -s "$dir/checksums.txt" ] || curl -fsSL "$base/cnpg-$CNPG_VERSION-checksums.txt" -o "$dir/checksums.txt"
+    local want; want="$(awk -v f="$file" '$2 == f {print $1}' "$dir/checksums.txt")"
+    [ -n "$want" ] && [ "$(shasum -a 256 "$dir/$file" | cut -d' ' -f1)" = "$want" ] \
+        || stop "kubectl cnpg for Windows $1 doesn't match its checksum; delete $dir and run again"
+    [ -s "$dir/kubectl-cnpg.exe" ] || tar -xzf "$dir/$file" -C "$dir" kubectl-cnpg.exe
+    [ -s "$dir/kubectl-cnpg.exe" ] || stop "kubectl-cnpg.exe wasn't in $file"
+}
+cnpg_for x86_64
+cnpg_for arm64
+
 say "Windows installer"
 # One for every Windows computer: it holds both programs and installs the one that fits.
 K="$ROOT/target/kubectl/$KUBECTL_VERSION"
@@ -207,6 +225,7 @@ makensis -V2 -DVERSION="$V" -DROOT="$ROOT" \
     -DEXE_AMD64="$ROOT/target/x86_64-pc-windows-gnu/release/kubedog.exe" \
     -DEXE_ARM64="$ROOT/target/aarch64-pc-windows-gnullvm/release/kubedog.exe" \
     -DKUBECTL_AMD64="$K/amd64/kubectl.exe" -DKUBECTL_ARM64="$K/arm64/kubectl.exe" -DKUBECTL_VERSION="$KUBECTL_VERSION" \
+    -DCNPG_AMD64="$ROOT/target/cnpg/$CNPG_VERSION/x86_64/kubectl-cnpg.exe" -DCNPG_ARM64="$ROOT/target/cnpg/$CNPG_VERSION/arm64/kubectl-cnpg.exe" -DCNPG_VERSION="$CNPG_VERSION" \
     -DNOTICES="$NOTICES" -DOUT="$DIST/kubedog-$V-windows-setup.exe" scripts/windows-installer.nsi
 sums
 
