@@ -430,7 +430,7 @@ mod tests {
         let p = std::env::temp_dir().join(format!("kubedog-kubectl-{}", std::process::id()));
         std::fs::write(&p, "#!/bin/sh\ncase \"$*\" in *logs*) echo 'ERROR made up';; *missing*) echo 'not found' >&2; exit 1;; *) echo '{\"items\":[{\"metadata\":{\"name\":\"made-up\"}}]}';; esac\n").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let k = Kubectl { bin: Some(p.clone()), kubeconfig: None, helm: None, cnpg: None };
+        let k = Kubectl { bin: Some(p.clone()), kubeconfig: None, helm: None, cnpg: None, wsl: None };
         let l: Vec<Look> = [json!({"tool": "list", "kind": "pods"}), json!({"tool": "logs", "ns": "x", "pod": "y"}), json!({"tool": "show", "kind": "pod", "ns": "x", "name": "missing"})].into_iter().map(|v| one(v).unwrap()).collect();
         let v = run(&k, &l, &std::sync::atomic::AtomicBool::new(false));
         assert_eq!((v[0][0]["items"][0]["metadata"]["name"].as_str(), v[1][0].as_str(), v[2]["error"].as_str()), (Some("made-up"), Some("ERROR made up\n"), Some("not found")));

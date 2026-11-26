@@ -37,7 +37,11 @@ impl KubedogApp {
         }
         self.apply_kubeconfigs();
         self.contexts_loading = true;
-        let files: Vec<String> = self.prefs.kubeconfigs.iter().filter(|f| f.enabled).map(|f| f.path.clone()).collect();
+        // Through a Linux in WSL: its own kubeconfig, by its own paths.
+        let files: Vec<String> = match &self.kubectl.wsl {
+            Some(w) => w.kubeconfig.clone(),
+            None => self.prefs.kubeconfigs.iter().filter(|f| f.enabled).map(|f| f.path.clone()).collect(),
+        };
         let k = self.kubectl.clone();
         let tx = self.tx.clone();
         let ctx = self.egui_ctx.clone();
@@ -73,6 +77,10 @@ impl KubedogApp {
     pub(super) fn on_cluster_text(&mut self, key: &str, result: &Result<String, String>) -> bool {
         if key == "ctxerrors" {
             self.file_errors = result.as_ref().ok().filter(|s| !s.is_empty()).cloned();
+            return true;
+        }
+        if key == "wslapp" {
+            self.on_wsl_app(result);
             return true;
         }
         if key == "pickfile" {

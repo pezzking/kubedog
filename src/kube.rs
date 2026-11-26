@@ -32,6 +32,88 @@ pub struct Kubectl {
     pub helm: Option<PathBuf>,
     /// The CloudNativePG plugin (kubectl cnpg), if it's installed.
     pub cnpg: Option<PathBuf>,
+    /// On Windows: a Linux in WSL that kubectl, helm and the kubeconfig are taken from, instead of this computer.
+    pub wsl: Option<Wsl>,
+}
+
+/// A Linux in Windows (WSL) the whole app works through: its own programs and its own kubeconfig.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Wsl {
+    pub linux: String,
+    /// Where that Linux looks for programs, as its own shell has it (without Windows' folders).
+    pub path: String,
+    /// Its kubeconfig files, as paths in that Linux.
+    pub kubeconfig: Vec<String>,
+    pub kubectl: String,
+    /// Empty when it has none.
+    pub helm: String,
+    pub cnpg: String,
+}
+
+pub fn system32(program: &str) -> PathBuf {
+    PathBuf::from(std::env::var_os("SystemRoot").unwrap_or("C:\\Windows".into())).join("System32").join(program)
+}
+
+/// Asked of the Linux once. Its path and kubeconfig come from the person's own shell there, so what their start-up
+/// files set is seen; the programs are then looked for in plain sh, where no alias is in the way. Fixed text.
+const WSL_ASK: &str = r#"s=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7); [ -x "$s" ] || s=/bin/sh
+e=$("$s" -lic 'printf "\nKD_HOME=%s\nKD_PATH=%s\nKD_KUBECONFIG=%s\n" "$HOME" "$PATH" "$KUBECONFIG"' 2>/dev/null)
+printf '%s\n' "$e"
+p=$(printf '%s\n' "$e" | sed -n 's/^KD_PATH=//p' | tail -1)
+[ -n "$p" ] && PATH=$p
+for t in kubectl helm kubectl-cnpg; do printf 'KD_%s=%s\n' "$t" "$(command -v "$t")"; done
+"#;
+
+impl Wsl {
+    /// What starts a program in the Linux: wsl.exe and its first arguments. No shell reads them.
+    pub fn start(&self, program: &str) -> (PathBuf, Vec<String>) {
+        let mut a: Vec<String> = ["-d", &self.linux, "--exec", "env"].iter().map(|x| x.to_string()).collect();
+        a.push(format!("PATH={}", self.path));
+        a.push(format!("KUBECONFIG={}", self.kubeconfig.join(":")));
+        a.push(program.to_string());
+        (system32("wsl.exe"), a)
+    }
+
+    pub fn json(&self) -> Value {
+        serde_json::json!({"linux": self.linux, "path": self.path, "kubeconfig": self.kubeconfig, "kubectl": self.kubectl, "helm": self.helm, "cnpg": self.cnpg})
+    }
+
+    pub fn from_json(v: &Value) -> Option<Wsl> {
+        let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+        let w = Wsl { linux: s("linux"), path: s("path"), kubeconfig: v["kubeconfig"].as_array().map(|l| l.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(), kubectl: s("kubectl"), helm: s("helm"), cnpg: s("cnpg") };
+        (!w.linux.is_empty() && !w.kubectl.is_empty()).then_some(w)
+    }
+
+    /// From what the Linux answered.
+    pub fn from_answer(linux: &str, text: &str) -> Result<Wsl, String> {
+        let get = |key: &str| text.lines().filter_map(|l| l.trim_end_matches('\r').strip_prefix(key)).next_back().unwrap_or("").trim().to_string();
+        let home = get("KD_HOME=");
+        if home.is_empty() {
+            return Err(format!("{linux} didn't answer: is it still there, and does it start?"));
+        }
+        let kubectl = get("KD_kubectl=");
+        if kubectl.is_empty() {
+            return Err(format!("kubectl isn't installed in {linux}. Install it there, or switch this off in Settings > Terminal."));
+        }
+        let own = get("KD_KUBECONFIG=");
+        let kubeconfig: Vec<String> = if own.is_empty() { vec![format!("{}/.kube/config", home.trim_end_matches('/'))] } else { own.split(':').filter(|p| !p.is_empty()).map(String::from).collect() };
+        Ok(Wsl { linux: linux.to_string(), path: wsl_path(&get("KD_PATH=")), kubeconfig, kubectl, helm: get("KD_helm="), cnpg: get("KD_kubectl-cnpg=") })
+    }
+
+    /// Ask the Linux where its things are. Takes a moment when it has to be started first.
+    pub fn ask(linux: &str) -> Result<Wsl, String> {
+        let mut c = Command::new(system32("wsl.exe"));
+        c.args(["-d", linux, "--exec", "sh", "-c", WSL_ASK]).stdin(Stdio::null());
+        quiet(&mut c);
+        let o = c.output().map_err(|e| format!("WSL couldn't be started: {e}"))?;
+        Wsl::from_answer(linux, &String::from_utf8_lossy(&o.stdout))
+    }
+}
+
+/// The Linux's own folders for programs: Windows' folders (under /mnt) are left out, they aren't needed and make it long.
+fn wsl_path(path: &str) -> String {
+    let l: Vec<&str> = path.trim().split(':').filter(|p| !p.is_empty() && !p.starts_with("/mnt/")).collect();
+    if l.is_empty() { "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into() } else { l.join(":") }
 }
 
 /// The person's home folder (Windows has no HOME of its own).
@@ -126,6 +208,7 @@ impl Kubectl {
             kubeconfig,
             helm: find_program("helm"),
             cnpg: find_program("kubectl-cnpg").or_else(|| beside_kubedog("kubectl-cnpg")),
+            wsl: None,
         }
     }
 
@@ -137,11 +220,35 @@ impl Kubectl {
     }
 
     pub fn command(&self, args: &[String]) -> Option<Command> {
+        if let Some(w) = &self.wsl {
+            return Some(Self::in_wsl(w, &w.kubectl, args));
+        }
         let bin = self.bin.as_ref()?;
         let mut c = Command::new(bin);
         c.args(args);
         self.prepare(&mut c);
         Some(c)
+    }
+
+    /// A program of the Linux, with its own path and kubeconfig: nothing of this computer's is handed over.
+    fn in_wsl(w: &Wsl, program: &str, args: &[String]) -> Command {
+        let (p, first) = w.start(program);
+        let mut c = Command::new(p);
+        c.args(first).args(args);
+        quiet(&mut c);
+        c.stdin(Stdio::null());
+        c
+    }
+
+    /// kubectl for a terminal, where Kubedog doesn't start it itself: the program and what goes before the arguments.
+    pub fn program(&self) -> Option<(String, Vec<String>)> {
+        match &self.wsl {
+            Some(w) => {
+                let (p, first) = w.start(&w.kubectl);
+                Some((p.to_string_lossy().to_string(), first))
+            }
+            None => Some((self.bin.as_ref()?.to_string_lossy().to_string(), vec![])),
+        }
     }
 
     fn prepare(&self, c: &mut Command) {
@@ -231,12 +338,17 @@ impl Kubectl {
     }
 
     pub fn run_helm(&self, args: &[String]) -> Result<String, String> {
-        let Some(bin) = &self.helm else {
-            return Err("helm was not found on this computer".into());
+        let mut c = match (&self.wsl, &self.helm) {
+            (Some(w), _) if w.helm.is_empty() => return Err(format!("helm isn't installed in {}", w.linux)),
+            (Some(w), _) => Self::in_wsl(w, &w.helm, args),
+            (None, None) => return Err("helm was not found on this computer".into()),
+            (None, Some(bin)) => {
+                let mut c = Command::new(bin);
+                c.args(args);
+                self.prepare(&mut c);
+                c
+            }
         };
-        let mut c = Command::new(bin);
-        c.args(args);
-        self.prepare(&mut c);
         let out = c.output().map_err(|e| format!("could not start helm: {e}"))?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).to_string())
@@ -421,4 +533,46 @@ pub fn human_duration(s: i64) -> String {
 /// Seconds since a timestamp, for sorting by age.
 pub fn age_secs(ts: &str) -> i64 {
     parse_time(ts).map(|t| now_secs() - t).unwrap_or(i64::MAX)
+}
+
+#[cfg(test)]
+mod wsl_tests {
+    use super::*;
+
+    #[test]
+    fn a_linux_in_wsl() {
+        let text = "Welcome\r\n\nKD_HOME=/home/dev\nKD_PATH=/home/dev/.local/bin:/usr/local/bin:/usr/bin:/mnt/c/Program Files/One:/mnt/c/Windows\nKD_KUBECONFIG=\nKD_kubectl=/usr/local/bin/kubectl\nKD_helm=\nKD_kubectl-cnpg=/home/dev/.local/bin/kubectl-cnpg\n";
+        let w = Wsl::from_answer("Ubuntu", text).unwrap();
+        assert_eq!(w.path, "/home/dev/.local/bin:/usr/local/bin:/usr/bin");
+        assert_eq!(w.kubeconfig, ["/home/dev/.kube/config"]);
+        assert_eq!((w.kubectl.as_str(), w.helm.as_str(), w.cnpg.as_str()), ("/usr/local/bin/kubectl", "", "/home/dev/.local/bin/kubectl-cnpg"));
+        assert_eq!(Wsl::from_json(&w.json()), Some(w.clone()));
+        // Its own KUBECONFIG, when its shell sets one.
+        let own = Wsl::from_answer("Ubuntu", &text.replace("KD_KUBECONFIG=", "KD_KUBECONFIG=/work/one:/work/two")).unwrap();
+        assert_eq!(own.kubeconfig, ["/work/one", "/work/two"]);
+        // Nothing that could be mistaken for fine.
+        assert!(Wsl::from_answer("Ubuntu", "").unwrap_err().contains("didn't answer"));
+        assert!(Wsl::from_answer("Ubuntu", &text.replace("KD_kubectl=/usr/local/bin/kubectl", "KD_kubectl=")).unwrap_err().contains("isn't installed in Ubuntu"));
+
+        // Every kubectl and helm goes into the Linux, each argument on its own, with the Linux's path and kubeconfig.
+        let k = Kubectl { bin: None, kubeconfig: Some("C:\\Users\\dev\\.kube\\config".into()), helm: None, cnpg: None, wsl: Some(own) };
+        let c = k.command(&["--context".into(), "shop".into(), "get".into(), "pods".into(), "-o".into(), "jsonpath={..name}{\"\\n\"}".into()]).unwrap();
+        let args: Vec<String> = c.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        assert_eq!(args, ["-d", "Ubuntu", "--exec", "env", "PATH=/home/dev/.local/bin:/usr/local/bin:/usr/bin", "KUBECONFIG=/work/one:/work/two", "/usr/local/bin/kubectl", "--context", "shop", "get", "pods", "-o", "jsonpath={..name}{\"\\n\"}"]);
+        assert!(c.get_program().to_string_lossy().ends_with("wsl.exe"));
+        // Nothing of Windows' own is handed over.
+        assert!(c.get_envs().all(|(k, _)| k != "KUBECONFIG" && k != "PATH"));
+        assert_eq!(k.program().unwrap().1.last().unwrap(), "/usr/local/bin/kubectl");
+        assert!(k.run_helm(&["list".into()]).unwrap_err().contains("helm isn't installed in Ubuntu"));
+        // The question itself is sound sh (here it has no WSL to ask, so it tells about this computer).
+        #[cfg(unix)]
+        {
+            let o = Command::new("sh").args(["-c", WSL_ASK]).output().unwrap();
+            let t = String::from_utf8_lossy(&o.stdout).to_string();
+            assert!(t.contains("\nKD_HOME=/") && t.contains("\nKD_PATH=/") && t.contains("\nKD_kubectl=") && t.contains("\nKD_kubectl-cnpg="), "{t}");
+        }
+        // Without WSL: as it always was.
+        let plain = Kubectl { bin: Some("/bin/echo".into()), kubeconfig: None, helm: None, cnpg: None, wsl: None };
+        assert_eq!(plain.program().unwrap(), ("/bin/echo".to_string(), vec![]));
+    }
 }

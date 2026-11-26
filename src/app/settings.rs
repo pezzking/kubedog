@@ -487,8 +487,17 @@ impl KubedogApp {
         title(ui, "Kubedog", "Talks to your clusters through kubectl.");
         card(ui, |ui| {
             kv(ui, "Version", env!("CARGO_PKG_VERSION"));
-            kv(ui, "kubectl", self.kubectl.bin.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "not found".into()));
-            kv(ui, "helm", self.kubectl.helm.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "not found (Helm page is empty)".into()));
+            match &self.kubectl.wsl {
+                Some(w) => {
+                    kv(ui, "kubectl", format!("{} in {} (WSL)", w.kubectl, w.linux));
+                    kv(ui, "helm", if w.helm.is_empty() { format!("not installed in {} (Helm page is empty)", w.linux) } else { format!("{} in {} (WSL)", w.helm, w.linux) });
+                    kv(ui, "Kubeconfig", format!("{} in {} (WSL)", w.kubeconfig.join(", "), w.linux));
+                }
+                None => {
+                    kv(ui, "kubectl", self.kubectl.bin.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "not found".into()));
+                    kv(ui, "helm", self.kubectl.helm.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "not found (Helm page is empty)".into()));
+                }
+            }
             kv(ui, "Settings file", prefs_path().map(|p| clusters::short_path(&p.to_string_lossy())).unwrap_or_default());
             kv(ui, "Thanks to", "PathViz by Ivan Velichko (MIT licence): parts of the packet decoder began there; see THIRD-PARTY.md");
         });

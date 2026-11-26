@@ -542,7 +542,7 @@ impl KubedogApp {
         if self.screenshot.is_some() || self.demo {
             return;
         }
-        let Some(bin) = self.kubectl.bin.clone() else { return };
+        let Some((program, mut first)) = self.kubectl.program() else { return };
         let read_only = !self.unlocked.contains(&id.ctx);
         let mut args = cnpg_args(id, &["psql"]);
         if replica {
@@ -556,7 +556,8 @@ impl KubedogApp {
         if read_only {
             self.toast("Protected: this psql session starts read-only. Unlock the cluster for a normal one.".into(), false);
         }
-        self.run_in_terminal(title, &bin.to_string_lossy(), args, None);
+        first.extend(args);
+        self.run_in_terminal(title, &program, first, None);
     }
 
     fn pg_action(&mut self, id: &PgId, args: &[&str], what: String, title: &str, body: String, button: &str, danger: bool) {

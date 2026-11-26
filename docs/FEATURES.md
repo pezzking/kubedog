@@ -69,6 +69,10 @@ The short version is in the [README](../README.md). This is the whole list.
   clusters are the ones opened in Kubedog. Kubedog doesn't install tools there: kubectl has to be in that Linux, and
   helm, argocd and the others if you want them; the shell and the panel say which are missing. A Linux that runs now is
   listed first, whatever it's called. (The Linux side was tried in Ubuntu and Debian; not yet in WSL itself.)
+- **The whole app through WSL (Windows, Settings > Terminal):** with a Linux chosen for the Shell, a tick makes all of
+  Kubedog work through it: kubectl and helm run in that Linux, and the clusters are the ones in its own kubeconfig
+  (`~/.kube/config` there, or what `KUBECONFIG` says in its shell), so logins made there work in Kubedog. The
+  kubeconfig files added in Kubedog aren't used meanwhile. Not yet tried on a Windows PC with WSL.
 - **Readiness:** before an upgrade, a drain rehearsal, what expires, who may do what, what's wasted,
   what's unsafe.
 - **Operators:** pages for Argo CD, External Secrets and Vault, cert-manager, KEDA, Rook Ceph,

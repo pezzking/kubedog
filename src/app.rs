@@ -718,6 +718,7 @@ impl KubedogApp {
         app.log_prefs.timestamps = app.prefs.log_timestamps;
         app.log_prefs.since = SINCE_CHOICES.iter().copied().find(|x| *x == app.prefs.log_since).unwrap_or(DEFAULT_SINCE);
         app.apply_kubeconfigs();
+        app.wsl_app_start();
         if app.kubectl.bin.is_none() {
             // Pointed out by hand earlier?
             let by_hand = std::path::PathBuf::from(app.prefs.kubectl_path.trim());
@@ -1610,7 +1611,7 @@ impl KubedogApp {
             self.toast("Demo data: shells are turned off.".into(), true);
             return;
         }
-        let Some(bin) = self.kubectl.bin.clone() else { return };
+        let Some((program, mut first)) = self.kubectl.program() else { return };
         let mut cmd = String::new();
         if let Some(kc) = &self.kubectl.kubeconfig {
             cmd.push_str(&format!("KUBECONFIG={} ", sh_quote(kc)));
@@ -1631,7 +1632,8 @@ impl KubedogApp {
         if self.active.len() > 1 {
             title = format!("{} · {title}", ctx_label(&sel.ctx));
         }
-        self.run_in_terminal(title, &bin.to_string_lossy(), args, None);
+        first.extend(args);
+        self.run_in_terminal(title, &program, first, None);
     }
 
     /// Run a command in the terminal chosen in Settings (built-in or a Mac app).
@@ -2560,6 +2562,8 @@ pub(crate) struct Prefs {
     open_all: bool,
     /// What the Shell superpower opens: empty for the usual shell, or "wsl:<name>".
     shell: String,
+    /// On Windows, with a Linux chosen above: the whole app works through it (its kubectl, helm and kubeconfig).
+    wsl_app: bool,
     /// Named groups of contexts, opened together.
     groups: Vec<Group>,
     /// Per list ("Pods", "Deployments"...): the columns shown, in order. Missing = the usual ones.
@@ -2642,6 +2646,7 @@ impl Default for Prefs {
             fav_pages: vec![],
             open_all: false,
             shell: String::new(),
+            wsl_app: false,
             groups: vec![],
             columns: HashMap::new(),
             hide_empty_columns: false,
@@ -2703,6 +2708,7 @@ fn prefs_from_json(v: &Value) -> Prefs {
         fav_pages: v["fav_pages"].as_array().map(|a| a.iter().filter_map(|f| Some((f["page"].as_str()?.to_string(), f["label"].as_str()?.to_string()))).collect()).unwrap_or_default(),
         open_all: v["open_all"].as_bool().unwrap_or(false),
         shell: v["shell"].as_str().unwrap_or("").to_string(),
+        wsl_app: v["wsl_app"].as_bool().unwrap_or(false),
         // "Continue where I left off" is the default; a file from before it existed (its "startup"
         // was always written as "start") takes the new default too.
         startup: match v["startup2"].as_str() {
@@ -2810,6 +2816,7 @@ fn prefs_to_json(p: &Prefs) -> Value {
         "fav_pages": p.fav_pages.iter().map(|f| serde_json::json!({"page": f.0, "label": f.1})).collect::<Vec<_>>(),
         "open_all": p.open_all,
         "shell": p.shell,
+        "wsl_app": p.wsl_app,
         "startup2": p.startup,
         "session": {
             "view": p.session.view,

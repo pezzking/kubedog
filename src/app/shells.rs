@@ -190,7 +190,7 @@ fn running_in(out: &[u8]) -> Vec<String> {
 }
 
 fn system32(program: &str) -> PathBuf {
-    PathBuf::from(std::env::var_os("SystemRoot").unwrap_or("C:\\Windows".into())).join("System32").join(program)
+    kube::system32(program)
 }
 
 fn find_linuxes() -> Vec<String> {
@@ -236,7 +236,11 @@ const START_WSL: &str = r##"KUBEDOG_SHELL=$(pwd -P)
 KUBEDOG_REST=
 while IFS= read -r kd_p || [ -n "$kd_p" ]; do
   [ -n "$kd_p" ] || continue
-  kd_x=$(wslpath -u "$kd_p" </dev/null 2>/dev/null) || continue
+  # One of the Linux's own files is taken as it is; one of Windows' is turned into its path here.
+  case "$kd_p" in
+    /*) kd_x=$kd_p;;
+    *) kd_x=$(wslpath -u "$kd_p" </dev/null 2>/dev/null) || continue;;
+  esac
   KUBEDOG_REST="$KUBEDOG_REST${KUBEDOG_REST:+:}$kd_x"
 done < rest
 KUBEDOG_FRONT="$KUBEDOG_SHELL/config${KUBEDOG_REST:+:$KUBEDOG_REST}"
@@ -662,7 +666,11 @@ impl KubedogApp {
         let contexts = self.contexts.clone();
         let argo: HashMap<String, String> = self.active.iter().filter_map(|c| self.refs(c, Kind::Deployments, "").unwrap_or_default().into_iter().find(|d| d["metadata"]["labels"]["app.kubernetes.io/part-of"] == "argocd" || d["metadata"]["name"] == "argocd-server").map(|d| (c.clone(), d["metadata"]["namespace"].as_str().unwrap_or("argocd").to_string()))).collect();
         let ns = self.ns_filter.clone();
-        let rest = self.kubectl.kubeconfig.clone().unwrap_or_else(|| kube::home().map(|h| h.join(".kube/config").to_string_lossy().to_string()).unwrap_or_default());
+        let rest = match &self.kubectl.wsl {
+            // The whole app goes through a Linux: its shells use that Linux's own kubeconfig.
+            Some(w) => w.kubeconfig.join(&kube::LIST_SEP.to_string()),
+            None => self.kubectl.kubeconfig.clone().unwrap_or_else(|| kube::home().map(|h| h.join(".kube/config").to_string_lossy().to_string()).unwrap_or_default()),
+        };
         let kubectl = self.kubectl.bin.clone();
         let shell = own_shell();
         sweep();
@@ -975,6 +983,7 @@ impl KubedogApp {
         ui.add_space(16.0);
         let mut now = self.shell_kind();
         let was = now.clone();
+        let mut whole = self.prefs.wsl_app;
         card(ui, |ui| {
             ui.label(RichText::new("Shell (superpower)").size(z(15.0)).strong().color(TEXT_DEFAULT()));
             ui.add_space(4.0);
@@ -983,10 +992,75 @@ impl KubedogApp {
             }
             ui.add_space(4.0);
             settings::hint(ui, "With WSL, the tools are the ones installed in that Linux: Kubedog doesn't install them, so kubectl has to be there, and helm, argocd and the others if you want them. It uses the clusters you opened in Kubedog. A cluster that signs in with a Windows program, or whose certificate is a file given by its Windows path, can't be reached from there.");
+            if let Some(linux) = now.strip_prefix("wsl:") {
+                ui.add_space(8.0);
+                ui.checkbox(&mut whole, format!("Use {linux} for the whole app, not only for the Shell"));
+                settings::hint(ui, "Kubedog then runs kubectl and helm in that Linux and lists the clusters of its kubeconfig (~/.kube/config there, or what KUBECONFIG says in its shell): logins made there work here. The kubeconfig files added in Kubedog aren't used meanwhile, and the clusters that are open are closed when this changes. A file on Windows can't be handed to kubectl there, and a port forward is reached the way WSL lets localhost through.");
+                if let Some(w) = &self.kubectl.wsl {
+                    said(ui, &format!("In use: {} in {}.", w.kubectl, w.linux), SUCCESS());
+                }
+            }
         });
-        if now != was {
+        if now != was || whole != self.prefs.wsl_app {
             self.prefs.shell = now;
+            self.prefs.wsl_app = whole;
             self.save();
+            if self.wsl_app_linux().is_some() || self.kubectl.wsl.is_some() {
+                self.wsl_app_start();
+            }
+        }
+    }
+
+    /// The Linux the whole app goes through, when that's asked for (Windows only).
+    fn wsl_app_linux(&self) -> Option<String> {
+        self.prefs.shell.strip_prefix("wsl:").filter(|_| cfg!(windows) && self.prefs.wsl_app && self.screenshot.is_none()).map(String::from)
+    }
+
+    /// Follows the setting: asks the Linux where its things are (in a thread), or goes back to this computer's own.
+    pub(super) fn wsl_app_start(&mut self) {
+        match self.wsl_app_linux() {
+            Some(linux) => {
+                if self.kubectl.wsl.as_ref().is_some_and(|w| w.linux == linux) {
+                    return;
+                }
+                self.spawn(move |_| Msg::Text { key: "wslapp".into(), result: kube::Wsl::ask(&linux).map(|w| w.json().to_string()) });
+            }
+            None if self.kubectl.wsl.is_some() => {
+                if self.connected {
+                    self.disconnect();
+                }
+                let found = Kubectl::detect();
+                self.kubectl = Kubectl { kubeconfig: self.kubectl.kubeconfig.clone(), ..found };
+                self.apply_kubeconfigs();
+                self.load_contexts();
+            }
+            None => {}
+        }
+    }
+
+    /// The Linux answered (or didn't).
+    pub(super) fn on_wsl_app(&mut self, result: &Result<String, String>) {
+        let got = result.clone().and_then(|t| serde_json::from_str::<Value>(&t).ok().and_then(|v| kube::Wsl::from_json(&v)).ok_or("The Linux's answer couldn't be read.".to_string()));
+        match got {
+            // Not asked for anymore in the meantime.
+            Ok(w) if self.wsl_app_linux().as_deref() != Some(w.linux.as_str()) => {}
+            Ok(w) => {
+                if self.connected {
+                    self.disconnect();
+                }
+                if self.demo {
+                    self.leave_demo();
+                }
+                self.toast(format!("Kubedog works through {} now: its kubectl and its kubeconfig.", w.linux), false);
+                self.kubectl.bin = Some(kube::system32("wsl.exe"));
+                self.kubectl.helm = (!w.helm.is_empty()).then(|| PathBuf::from(&w.helm));
+                self.kubectl.cnpg = (!w.cnpg.is_empty()).then(|| PathBuf::from(&w.cnpg));
+                self.kubectl.wsl = Some(w);
+                self.load_contexts();
+            }
+            Err(e) => {
+                self.toast(format!("{e} Kubedog keeps using this computer's own kubectl."), true);
+            }
         }
     }
 
@@ -1211,7 +1285,7 @@ mod tests {
             }
             let l = [ctx("one", "shop")];
             let sep = kube::LIST_SEP;
-            let rest = format!("C\\Users\\A B\\config{sep}D\\gone{sep}C\\two");
+            let rest = format!("C\\Users\\A B\\config{sep}D\\gone{sep}C\\two{sep}/home/dev/.kube/own one");
             let s = prepare_wsl("Any", &For { contexts: &l, ctx: "one", ns: None, argo: &|_| "argocd".into(), rest: &rest, kubectl: None }).unwrap();
             let env = [("HOME", home.to_string_lossy().to_string()), ("SHELL", shell.into()), ("PATH", format!("{}:/usr/bin:/bin", bin.display()))].map(|e| (e.0.to_string(), e.1));
             let mut d = terminal::Dock::default();
@@ -1228,7 +1302,7 @@ mod tests {
             };
             wait(&d, "$ ");
             d.enter("echo \"<${KUBECONFIG#*/config:}> $MINE\"");
-            wait(&d, "</mnt/c/Users/A B/config:/mnt/c/two> yes");
+            wait(&d, "</mnt/c/Users/A B/config:/mnt/c/two:/home/dev/.kube/own one> yes");
             d.enter("kubectl delete pod x");
             wait(&d, "[y/N]");
             d.enter("n");
