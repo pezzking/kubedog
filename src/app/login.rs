@@ -115,6 +115,9 @@ fn config(auth: &Auth, base: &str, port: u16, paths: &[String], ca: Option<&str>
     if let Some(ca) = ca {
         c += &format!("cacert = {}\n", quoted(ca)?);
     }
+    if REVOKE_SOFT {
+        c += "ssl-revoke-best-effort\n";
+    }
     match auth {
         Auth::None => {}
         Auth::User(u, p) => c += &format!("user = {}\n", quoted(&format!("{u}:{p}"))?),
@@ -140,26 +143,32 @@ fn answers(out: &str) -> Vec<(u16, String)> {
     v
 }
 
+/// Windows asks the certificate's issuer whether it was withdrawn. Where that can't be asked (no internet), the
+/// request goes on; the certificate itself is checked as always, and one known to be withdrawn is still refused.
+const REVOKE_SOFT: bool = cfg!(windows);
+
+/// The certificate (not a secret) has to be a file for curl. One per certificate, in Kubedog's own folder, written
+/// when it isn't there yet or isn't what it should be: not a new file for every request.
+fn ca_file(pem: &str) -> Result<std::path::PathBuf, String> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    pem.hash(&mut h);
+    let dir = prefs_path().and_then(|p| p.parent().map(|d| d.join("ca"))).ok_or("no folder to keep the certificate in")?;
+    let path = dir.join(format!("{:016x}.pem", h.finish()));
+    if std::fs::read_to_string(&path).is_ok_and(|t| t == pem) {
+        return Ok(path);
+    }
+    std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, pem)).map_err(|e| format!("couldn't keep the certificate: {e}"))?;
+    Ok(path)
+}
+
 /// GET several addresses through a tunnel.
 pub(super) fn get(auth: &Auth, base: &str, t: &Tunnel, paths: &[String], ca_pem: Option<&str>) -> Result<Vec<(u16, String)>, String> {
-    // The certificate (not a secret) has to be a file; the name is random and it's gone afterwards.
-    struct Gone(std::path::PathBuf);
-    impl Drop for Gone {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
     let ca = match ca_pem {
-        Some(pem) => {
-            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-            let path = std::env::temp_dir().join(format!("kubedog-ca-{}-{}-{nanos}.pem", std::process::id(), t.port));
-            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| format!("couldn't keep the certificate for a moment: {e}"))?;
-            f.write_all(pem.as_bytes()).map_err(|e| e.to_string())?;
-            Some(Gone(path))
-        }
+        Some(pem) => Some(ca_file(pem)?),
         None => None,
     };
-    let cfg = config(auth, base, t.port, paths, ca.as_ref().and_then(|g| g.0.to_str()))?;
+    let cfg = config(auth, base, t.port, paths, ca.as_ref().and_then(|f| f.to_str()))?;
     let mut curl = Command::new("curl");
     crate::kube::quiet(&mut curl);
     let mut child = curl
