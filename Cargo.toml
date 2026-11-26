@@ -1,6 +1,6 @@
 [package]
 name = "kubedog"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2021"
 description = "Kubedog - a desktop Kubernetes client"
 readme = "README.md"
