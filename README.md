@@ -10,7 +10,13 @@ This repository holds the downloads. Every version is under [Releases](../../rel
 
 You need `kubectl` (or OpenShift's `oc`) on your `PATH`; the Windows installer brings one along.
 
-### macOS (Apple silicon) and Linux, with Homebrew
+### macOS (Apple silicon)
+
+Download `kubedog-<version>-macos-arm64.dmg` from [Releases](../../releases), open it and drag Kubedog to
+Applications. It's signed and checked by Apple (notarized), so it opens without a warning, also on a Mac without
+internet. With Homebrew, the same app: `brew install --cask pezzking/tap/kubedog-app`.
+
+### macOS (Apple silicon) and Linux, the command with Homebrew
 
 ```sh
 brew install pezzking/tap/kubedog
@@ -46,16 +52,18 @@ brings a `kubectl` along for computers that have none.
 Without installing: the `.zip` files hold the same `kubedog.exe`, without `kubectl`. Take `-x64` for Intel or
 AMD (nearly every PC) and `-arm64` for an ARM computer such as a Snapdragon laptop; the wrong one gives "This app can't run on your PC".
 
-### macOS, by hand
+### macOS, the program alone
 
-Download `kubedog-<version>-macos-arm64.tar.gz`. A download made with a browser is held back by macOS because the
-program isn't signed by Apple yet; Homebrew is the way that works without that. If you do download it by hand:
+`kubedog-<version>-macos-arm64.tar.gz` holds the program without the app around it, also signed and checked by
+Apple:
 
 ```sh
 tar xzf kubedog-*-macos-arm64.tar.gz
-xattr -dr com.apple.quarantine kubedog-*/
 ./kubedog-*/kubedog
 ```
+
+Apple's answer can't be fixed to a program alone, so a Mac asks Apple the first time it's started. Without
+internet, take the `.dmg`.
 
 ## Without internet (air-gapped)
 
@@ -64,7 +72,9 @@ statistics. Its AI help is off until you switch it on, and can be pointed at a m
 
 - **Windows:** carry `kubedog-<version>-windows-setup.exe` and `SHA256SUMS` inside. The installer
   holds everything, `kubectl` included, and needs no administrator.
-- **Linux and macOS:** carry the `.tar.gz` and `SHA256SUMS` inside and install by hand as above. `kubectl` or `oc`
+- **macOS:** carry the `.dmg` and `SHA256SUMS` inside. Apple's check travels inside it, so it opens without asking
+  Apple. `kubectl` or `oc` has to be on the computer already.
+- **Linux:** carry the `.tar.gz` and `SHA256SUMS` inside and install by hand as above. `kubectl` or `oc`
   has to be on the computer already. Homebrew needs the internet, so it isn't the way here.
 
 Check the file after carrying it over, as below.
