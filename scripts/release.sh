@@ -102,7 +102,7 @@ pack() { # pack <name> <built program> <tar|zip>
     mkdir -p "$dir/licenses"
     cp "$2" "$dir/"
     cp LICENSE THIRD-PARTY.md "$NOTICES" "$dir/"
-    cp assets/fonts/*-OFL.txt "$dir/licenses/"
+    cp assets/fonts/*-OFL.txt assets/fonts/*-LICENSE.txt "$dir/licenses/"
     if [ "$3" = zip ]; then
         (cd "$DIST" && zip -qr "$name.zip" "$name")
     else
@@ -132,7 +132,7 @@ mac_pack() { # mac_pack <time from Apple: none|apple> <ask Apple to check: 0|1>
     cp target/aarch64-apple-darwin/release/kubedog "$app/Contents/MacOS/kubedog"
     cp assets/icons/kubedog-macos.icns "$app/Contents/Resources/kubedog.icns"
     cp LICENSE THIRD-PARTY.md "$NOTICES" "$app/Contents/Resources/"
-    cp assets/fonts/*-OFL.txt "$app/Contents/Resources/licenses/"
+    cp assets/fonts/*-OFL.txt assets/fonts/*-LICENSE.txt "$app/Contents/Resources/licenses/"
     cat > "$app/Contents/Info.plist" <<PLIST_END
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

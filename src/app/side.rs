@@ -7,11 +7,11 @@ use super::*;
 pub(super) const PARTS: [(&str, &str); 11] = [
     ("Cluster", "◎"),
     ("Superpowers", "⚡"),
-    ("Workloads", "⧉"),
+    ("Workloads", "❐"),
     ("Configuration", "☰"),
     ("Networking", "⌖"),
     ("Storage", "⛁"),
-    ("Access Control", "⚿"),
+    ("Access Control", "🔑"),
     ("Helm", "⎈"),
     ("Administration", "⚙"),
     ("GitOps", "⎇"),

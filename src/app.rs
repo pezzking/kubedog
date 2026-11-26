@@ -1977,6 +1977,23 @@ impl KubedogApp {
 
 // ---------------- rows ----------------
 
+/// A padlock, drawn (no font's lock reads well this small): closed, or with its shackle swung open.
+fn padlock(p: &egui::Painter, c: egui::Pos2, h: f32, locked: bool, colour: Color32) {
+    let w = h * 0.78;
+    let body = egui::Rect::from_min_max(egui::pos2(c.x - w / 2.0, c.y - h * 0.06), egui::pos2(c.x + w / 2.0, c.y + h / 2.0));
+    p.rect_filled(body, CornerRadius::same((h * 0.14).round().max(1.0) as u8), colour);
+    // The shackle: two legs and half a circle. Open, it stands higher and its right leg is off the body.
+    let r = w * 0.30;
+    let top = if locked { c.y - h / 2.0 + r } else { c.y - h / 2.0 + r - h * 0.14 };
+    let mut l = vec![egui::pos2(c.x - r, body.top())];
+    l.extend((0..=12).map(|i| {
+        let a = std::f32::consts::PI * (1.0 - i as f32 / 12.0);
+        egui::pos2(c.x + r * a.cos(), top - r * a.sin())
+    }));
+    l.push(egui::pos2(c.x + r, if locked { body.top() } else { top + h * 0.10 }));
+    p.add(egui::Shape::line(l, Stroke::new((h * 0.13).max(1.2), colour)));
+}
+
 /// A small round icon button: a soft disc on hover, the glyph in the accent colour.
 thread_local! {
     /// Icon buttons drawn as buttons, with a frame (the Controls column of a list).
@@ -3584,7 +3601,7 @@ impl KubedogApp {
             let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), u(28.0)), Sense::click());
             let p = ui.painter();
             p.rect_stroke(r, CornerRadius::same(6), Stroke::new(1.0, if resp.hovered() { BORDER_DEFAULT() } else { BORDER_SUBTLE() }), egui::StrokeKind::Inside);
-            p.text(r.left_center() + egui::vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, "⌕  Search", FontId::proportional(z(13.5)), TEXT_PLACEHOLDER());
+            p.text(r.left_center() + egui::vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, "🔍  Search", FontId::proportional(z(13.5)), TEXT_PLACEHOLDER());
             p.text(r.right_center() - egui::vec2(10.0, 0.0), egui::Align2::RIGHT_CENTER, "⌘K", FontId::proportional(z(12.0)), TEXT_PLACEHOLDER());
             if resp.clicked() && self.connected {
                 self.open_search();
@@ -3606,10 +3623,8 @@ impl KubedogApp {
             if resp.on_hover_text(format!("{}\nClick to switch contexts", self.active.join("\n"))).clicked() {
                 self.disconnect();
             }
-            let lock = ui.add(
-                egui::Button::new(RichText::new(if all_locked { "🔒" } else { "🔓" }).size(z(12.0)).color(if all_locked { TEXT_SUBTLE() } else { WARNING() }))
-                    .frame(false),
-            );
+            let (spot, lock) = ui.allocate_exact_size(egui::vec2(z(18.0), z(18.0)), Sense::click());
+            padlock(ui.painter(), spot.center(), z(13.0), all_locked, if all_locked { TEXT_SUBTLE() } else { WARNING() });
             if lock
                 .on_hover_text(if all_locked {
                     "Protected: changes are blocked. Click to allow changes for this session."
@@ -3644,7 +3659,7 @@ impl KubedogApp {
                 let locked = !self.unlocked.contains(&c);
                 let g = p.layout_no_wrap(fit(ui, &ctx_label(&c), r.width() - 48.0, z(13.0)), FontId::proportional(z(13.0)), if on { TEXT_DEFAULT() } else { TEXT_MUTED() });
                 p.galley(egui::pos2(r.left() + 22.0, r.center().y - g.size().y / 2.0), g, TEXT_MUTED());
-                p.text(r.right_center() - egui::vec2(8.0, 0.0), egui::Align2::RIGHT_CENTER, if locked { "🔒" } else { "🔓" }, FontId::proportional(z(10.5)), if locked { TEXT_PLACEHOLDER() } else { WARNING() });
+                padlock(&p, r.right_center() - egui::vec2(8.0 + z(5.0), 0.0), z(11.0), locked, if locked { TEXT_PLACEHOLDER() } else { WARNING() });
                 if resp.on_hover_text(format!("{c}\nClick to show only this cluster")).clicked() {
                     self.ns_filter = None;
                     self.ns_ctx = if on { None } else { Some(c.clone()) };
@@ -5426,7 +5441,7 @@ impl KubedogApp {
                 ui.label(RichText::new(format!("{} /", sel.ns)).size(z(19.0)).color(TEXT_SUBTLE()));
             }
             ui.add(egui::Label::new(RichText::new(&sel.name).size(z(19.0)).strong().color(TEXT_DEFAULT())).truncate());
-            if ui.small_button("⧉").on_hover_text("Copy name").clicked() {
+            if ui.small_button("❐").on_hover_text("Copy name").clicked() {
                 ui.ctx().copy_text(sel.name.clone());
                 self.toast("Name copied".into(), false);
             }

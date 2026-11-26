@@ -1921,6 +1921,7 @@ name = "kubedog"
 version = "0.6.0"
 dependencies = [
  "eframe",
+ "egui",
  "egui_extras",
  "image",
  "keyring",

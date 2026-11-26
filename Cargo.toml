@@ -10,6 +10,8 @@ repository = "https://github.com/pezzking/kubedog"
 [dependencies]
 # persistence: the window's size and place are kept between runs.
 eframe = { version = "0.37", features = ["persistence"] }
+# The symbol fonts that come with egui: without them symbols are taken from the system, and not every system has them.
+egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
 egui_extras = "0.37"
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde_json = "1"

@@ -50,7 +50,12 @@ for each is in `assets/fonts/` (in a download: the `licenses` folder):
 | Atkinson Hyperlegible | `AtkinsonHyperlegible-OFL.txt` |
 | JetBrains Mono | `JetBrainsMono-OFL.txt` |
 
-The window toolkit (egui) brings fonts of its own; their licences are in the list of libraries.
+DejaVu Sans also comes with Kubedog, unchanged, for symbols (arrows, ticks, triangles) on systems whose own fonts
+lack them. It's free to use and pass on under the Bitstream Vera licence; DejaVu's own changes are in the public
+domain. The full text is in `DejaVuSans-LICENSE.txt`, in the same place.
+
+The window toolkit (egui) brings fonts of its own (Ubuntu, Hack, Noto Emoji and an icon font); their licences are in
+the list of libraries.
 
 ## Libraries
 

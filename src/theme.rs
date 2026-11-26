@@ -397,8 +397,18 @@ fn without_substitutions(font: &[u8]) -> Vec<u8> {
     f
 }
 
+/// Arrows, ticks, triangles and the like, for every system: what isn't in a font here is looked for among the
+/// system's own fonts, and Windows and Linux don't have all of them. Not changed in any way (its licence asks that).
+const SYMBOLS: &[u8] = include_bytes!("../assets/fonts/DejaVuSans.ttf");
+
 fn font_definitions(id: &str) -> egui::FontDefinitions {
     let mut f = egui::FontDefinitions::default();
+    f.font_data.insert("symbols".into(), std::sync::Arc::new(egui::FontData::from_static(SYMBOLS)));
+    // After the letters, before egui's emoji.
+    for family in f.families.values_mut() {
+        let at = family.iter().position(|n| n == "Ubuntu-Light").map(|i| i + 1).unwrap_or(family.len());
+        family.insert(at, "symbols".into());
+    }
     let usual = f.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     f.families.insert(font_family("ubuntu"), usual.clone());
     for (name, bytes) in FONT_FILES {
@@ -490,6 +500,46 @@ mod tests {
             let t = tags(&f);
             assert!(!t.iter().any(|t| t == b"GSUB"), "{name}");
             assert!(t.windows(2).all(|w| w[0] < w[1]), "{name}");
+        }
+    }
+
+    /// Every symbol written on screen is in a font that comes with Kubedog, so no system's own fonts are needed.
+    #[test]
+    fn fonts_have_every_symbol_on_screen() {
+        fn files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    files(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+        let mut l = vec![];
+        files(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut l);
+        let mut used = std::collections::BTreeSet::new();
+        for p in l {
+            let text = std::fs::read_to_string(&p).unwrap();
+            // What tests write isn't drawn; neither is a comment.
+            let text = text.split("#[cfg(test)]\nmod tests").next().unwrap_or("");
+            for line in text.lines().filter(|l| !l.trim_start().starts_with("//")) {
+                used.extend(line.chars().filter(|c| *c as u32 >= 0x2000 && !('\u{e000}'..='\u{f8ff}').contains(c)));
+            }
+        }
+        assert!(used.contains(&'★') && used.len() > 30, "{used:?}");
+        for (id, _) in FONTS {
+            let ctx = egui::Context::default();
+            install_font(&ctx, id);
+            let mut missing = String::new();
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let font = FontId::new(14.0, FontFamily::Proportional);
+                missing = used.iter().filter(|c| !ui.ctx().fonts_mut(|f| f.has_glyph(&font, **c))).map(|c| format!("{c} U+{:04X} ", *c as u32)).collect();
+                // The check itself works: this one is in none of them.
+                assert!(!ui.ctx().fonts_mut(|f| f.has_glyph(&font, '\u{2315}')));
+            });
+            out.textures_delta.clear();
+            assert_eq!(missing, "", "{id}: no font of Kubedog's own has these");
         }
     }
 
