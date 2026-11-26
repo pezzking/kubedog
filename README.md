@@ -45,7 +45,7 @@ protected cluster, zsh and bash ask before a command that changes something.
 Found by themselves when a cluster has them:
 
 - **Argo CD**, Flux and Tekton
-- **OpenShift:** updates, known risks and what's in the way
+- **OpenShift:** updates, known risks and what's in the way; and when your login has ended, a Log in button that opens the sign-in in your browser (`oc login --web`)
 - **Postgres** (CloudNativePG), **Elasticsearch** (ECK) and **Pulsar**
 - External Secrets and Vault, cert-manager, KEDA, Kyverno and Gatekeeper, Crossplane
 - Rook Ceph and Longhorn, Velero and Kasten backups, Prometheus, GPUs, gateways and routes

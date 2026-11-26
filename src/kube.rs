@@ -251,6 +251,14 @@ impl Kubectl {
         }
     }
 
+    /// Another program of this computer (OpenShift's oc), started with the same path and kubeconfig as kubectl.
+    pub fn other(&self, program: &std::path::Path, args: &[String]) -> Command {
+        let mut c = Command::new(program);
+        c.args(args);
+        self.prepare(&mut c);
+        c
+    }
+
     fn prepare(&self, c: &mut Command) {
         quiet(c);
         c.env("PATH", child_path());

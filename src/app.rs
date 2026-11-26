@@ -55,6 +55,7 @@ mod picks;
 mod shells;
 mod backup;
 mod update;
+mod relogin;
 mod side;
 mod rowmenu;
 mod favs;
@@ -495,6 +496,7 @@ pub struct KubedogApp {
     shells: shells::Shells,
     backup: backup::Backup,
     update: update::Update,
+    relogin: relogin::Relogin,
     catalog: oscatalog::Catalog,
     incident: incident::Room,
     ready: readiness::Ready,
@@ -632,6 +634,7 @@ impl KubedogApp {
             shells: Default::default(),
             backup: Default::default(),
             update: Default::default(),
+            relogin: Default::default(),
             catalog: Default::default(),
             incident: Default::default(),
             ready: Default::default(),
@@ -7322,6 +7325,7 @@ impl eframe::App for KubedogApp {
         self.remember_session(&ctx);
         self.companion_tick();
         self.update_tick();
+        self.relogin_tick();
         self.maybe_screenshot(&ctx);
         self.shortcuts(&ctx);
         if !self.demo && !self.contexts_loading && self.connected {
@@ -7400,6 +7404,7 @@ impl eframe::App for KubedogApp {
                 Frame::new().inner_margin(Margin { left: side, right: side, top: 6, bottom: 0 }).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_height(ui.available_height());
+                    self.relogin_cards(ui);
                     if self.selected.is_some() {
                         self.detail(ui);
                     } else {
@@ -7446,6 +7451,7 @@ impl eframe::App for KubedogApp {
         self.term.close_all();
         self.close_shells();
         login::close_all();
+        self.relogin_end_all();
         self.ai.chat = None;
         self.companion.chat = None;
         aiharness::end_all();

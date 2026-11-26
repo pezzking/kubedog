@@ -123,6 +123,14 @@ The short version is in the [README](../README.md). This is the whole list.
   (changes still ask before they're done).
 - **Favorites:** a star on every page of the sidebar (shown under the mouse) puts it in Favorites at the top; starred
   namespaces are first in the namespace menu and starred on the Namespaces page.
+- **A login that has ended is said, and OpenShift's can be renewed from Kubedog:** when a cluster answers that you
+  aren't logged in any more, a card above the page says so, with a row per cluster. For a login made with `oc login`, a
+  **Log in** button runs `oc login --web` for that cluster's address: your browser opens for the sign-in, and `oc` saves
+  the new login in your kubeconfig file and makes that cluster the current one for your terminals, as it always does.
+  Kubedog then asks the cluster whether the login works, says so when the sign-in was for another user, and reads
+  everything again. Kubedog never sees a password. It needs `oc` on the computer (the card says so when it's missing);
+  with the whole app in WSL, the card gives the line to run in the Linux instead. Other kinds of login only get the
+  notice. The card can be put away with "Not now".
 - **A newer version is told, not installed** (Settings > About): once a day Kubedog asks github.com which version is
   the newest; nothing about you or your clusters is sent. When yours is older, the top bar says so, and Settings > About
   gives the Homebrew line to run or opens the download page. One version can be skipped, the look can be switched off,

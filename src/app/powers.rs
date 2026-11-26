@@ -88,7 +88,7 @@ pub(super) enum Seen {
 pub(super) struct Powers {
     /// (cluster, kind) -> whether there are any.
     seen: HashMap<(String, String), Seen>,
-    asked: HashMap<String, Instant>,
+    pub(super) asked: HashMap<String, Instant>,
     /// Lists of operators: when each was last read is in the lists themselves.
     pub bad_only: bool,
     /// Slow kinds were asked for.

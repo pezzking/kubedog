@@ -58,6 +58,7 @@ platform-specific.
 | `src/main.rs` | Starts the program, opens the window, `--screenshot` mode |
 | `src/app.rs` | The window: start-up, background work, lists, object pages, dialogs, settings storage, shortcuts |
 | `src/app/clusters.rs` | Start page, kubeconfig files, cluster names, namespaces per cluster |
+| `src/app/relogin.rs` | A cluster whose login has ended: the card that says so, and `oc login --web` for OpenShift |
 | `src/app/update.rs` | Asking GitHub once a day for the newest version, and saying how to update |
 | `src/app/settings.rs` | The Settings page (General, Clusters, Kubeconfig files, Grafana, Terminal, Logs, Shortcuts, About) |
 | `src/app/dash.rs` | Cluster and Workloads overview dashboards |
@@ -137,6 +138,7 @@ reads from clusters and never saves settings. Environment variables choose what 
 - `KUBEDOG_SHOT_PAGE=hive`, with `KUBEDOG_SHOT_RIGHTS=1` to ask what the account may do
 - `KUBEDOG_SHOT_PAGE=detail` with `KUBEDOG_SHOT_TAB=containers|environment|network|scheduling|storage|files|whatif`; commands in a
   container only run with `KUBEDOG_SHOT_EXEC=1` (`KUBEDOG_SHOT_FILES=container`, `_PATH`, `_FILE`, `_DF=container`)
+- `KUBEDOG_SHOT_RELOGIN=oc` (or `none`: no oc on the computer) shows the card of a login that has ended, with a made-up OpenShift address; oc is never started in a screenshot
 - `KUBEDOG_SHOT_UPDATE=9.9.9` makes up a newer version for the top bar and Settings > About; GitHub is never asked in a screenshot
 - `KUBEDOG_SHOT_ZOOM=0.6` (see more of a long page), `KUBEDOG_SHOT_SCROLL=600`, `KUBEDOG_SHOT_THRESHOLD=50`
 
