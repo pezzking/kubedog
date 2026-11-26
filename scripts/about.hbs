@@ -1,0 +1,18 @@
+Kubedog: notices for what it's built with
+=========================================
+
+Kubedog is built with the libraries below. Each is listed under its licence, with the licence's text.
+The fonts that come with Kubedog have their own licence files next to this one.
+
+{{#each licenses}}
+--------------------------------------------------------------------------------
+{{{name}}} ({{id}})
+
+Used by:
+{{#each used_by}}
+  - {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

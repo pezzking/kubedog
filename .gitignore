@@ -1,0 +1,63 @@
+# Build output (Cargo.lock is kept: this is a program)
+/target/
+**/*.rs.bk
+*.pdb
+*.profraw
+*.profdata
+perf.data*
+flamegraph.svg
+
+# Installers and packages made for releases
+/dist/
+/release/
+*.app/
+*.dmg
+*.pkg
+*.msi
+*.deb
+*.rpm
+*.AppImage
+*.zip
+*.tar.gz
+
+# Plans: kept here, never in git
+/plans/
+
+# Screenshots and scratch files
+/shots/
+/_examples/
+/tmp/
+*.log
+
+# Never publish: clusters, logins and certificates
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+.kube/
+.env
+.env.*
+!.env.example
+*.pem
+# (public certificates the tests read)
+!/src/app/test-certs.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+/prefs.json
+
+# Systems and editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+
+# Coding agents' own files: kept on this computer, never in git
+.claude/
+CLAUDE.md
+CLAUDE.local.md
