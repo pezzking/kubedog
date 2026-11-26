@@ -14,8 +14,8 @@ A fast desktop app for Kubernetes clusters, for macOS, Windows and Linux. It tal
 - **Every cluster starts protected.** Nothing is scaled, deleted or restarted until you unlock that cluster and
   confirm, and the confirmation says which cluster it acts on.
 - **Several clusters side by side**, each with its own colour in every list.
-- **Superpowers for what runs in a cluster:** Argo CD, OpenShift, Postgres, Elasticsearch, Proxmox and more get
-  pages of their own, found by themselves.
+- **Superpowers:** pages that answer a question (what changed, is the network well, can this be upgraded), and pages
+  for what runs in a cluster, such as Argo CD, OpenShift and Postgres. See [below](#superpowers).
 - **Works without internet.** Nothing is downloaded after installing, there's no update check and no statistics.
 - **AI help only if you want it.** It's off until you switch it on, and you decide what may be sent and where.
 
@@ -27,9 +27,32 @@ Everything it does is in [docs/FEATURES.md](docs/FEATURES.md).
 |---|---|
 | ![The list of pods](docs/images/pods.png) Lists of every kind, with filters, columns you choose and actions on each row. | ![A pod's page](docs/images/pod.png) A pod's page: whether it's well, what it talks to, and how it came up. |
 
-![Incident Room: what changed, newest first](docs/images/incident.png)
+## Superpowers
 
-The Incident Room: what changed in the cluster, newest first. The pictures show a made-up cluster.
+Pages that answer a question instead of listing objects. They have their own section in the sidebar, and each can
+be set to Auto, On or Off in Settings; Off reads nothing for it.
+
+| | |
+|---|---|
+| ![Incident Room](docs/images/incident.png) **Incident Room:** what changed, why it's broken, errors in logs, can A reach B, comparing clusters and drift from Git. | ![Pod Hive](docs/images/hive.png) **Pod Hive:** a honeycomb of pods, filled as far as each uses its memory or CPU limit, with what's close to the edge and what asks for far more than it uses. |
+| ![Readiness](docs/images/readiness.png) **Readiness:** before an upgrade or a drain: what stands in the way, what expires, who may do what, what's wasted. | ![Network Lab](docs/images/netlab.png) **Network Lab:** is the network well, from what the cluster says itself, with tests from this computer or from a pod, and a look at packets. |
+
+![Shell](docs/images/shell.png)
+
+**Shell:** full-size terminals, each set up for one cluster, with ready commands for the tools you have. On a
+protected cluster, zsh and bash ask before a command that changes something.
+
+Found by themselves when a cluster has them:
+
+- **Argo CD**, Flux and Tekton
+- **OpenShift:** updates, known risks and what's in the way
+- **Postgres** (CloudNativePG), **Elasticsearch** (ECK) and **Pulsar**
+- External Secrets and Vault, cert-manager, KEDA, Kyverno and Gatekeeper, Crossplane
+- Rook Ceph and Longhorn, Velero and Kasten backups, Prometheus, GPUs, gateways and routes
+- Strimzi, Redis, MongoDB, RabbitMQ, MetalLB and Keycloak
+- **Proxmox** (optional): the hosts and virtual machines under the cluster
+
+The pictures show a made-up cluster.
 
 ## Install
 
