@@ -16,7 +16,7 @@ A fast desktop app for Kubernetes clusters, for macOS, Windows and Linux. It tal
 - **Several clusters side by side**, each with its own colour in every list.
 - **Superpowers:** pages that answer a question (what changed, is the network well, can this be upgraded), and pages
   for what runs in a cluster, such as Argo CD, OpenShift and Postgres. See [below](#superpowers).
-- **Works without internet.** Nothing is downloaded after installing and there are no statistics. Once a day it asks github.com for the newest version number, which can be switched off.
+- **Works without internet.** Nothing is downloaded after installing and there are no statistics. Once a day it asks github.com for the newest version number; it stops by itself where there's no internet, and an Air-gapped switch makes it never ask.
 - **AI help only if you want it.** It's off until you switch it on, and you decide what may be sent and where.
 
 Everything it does is in [docs/FEATURES.md](docs/FEATURES.md).
@@ -128,12 +128,16 @@ for Elasticsearch and Pulsar.
 
 Nothing is downloaded while installing or afterwards, and Kubedog keeps no statistics. One thing is asked from the
 internet without a click: once a day, github.com is asked which Kubedog version is the newest, so it can tell you
-when yours is old. Nothing about you, your computer or your clusters is sent, nothing is installed by itself, and
-without internet nothing happens. Switch it off in Settings > About. Its AI help is off until you switch it on, and
-can be pointed at a model inside your own network.
+when yours is old. Nothing about you, your computer or your clusters is sent, and nothing is installed by itself.
+Its AI help is off until you switch it on, and can be pointed at a model inside your own network.
+
+To make Kubedog never ask: switch on **Air-gapped** in Settings > About. Left alone, Kubedog does it itself: after
+a look without an answer it waits a day, and after three of those it stops and switches Air-gapped on. To have it
+on from the first start, tick **Air-gapped** in the Windows installer (or run it with `/AIRGAPPED`, and `/S` for no
+questions), or start Kubedog with `KUBEDOG_AIRGAPPED=1` on any system.
 
 - **Windows:** carry `kubedog-<version>-windows-setup.exe` and `SHA256SUMS` inside. The installer
-  holds everything, `kubectl` included, and needs no administrator.
+  holds everything, `kubectl` included, and needs no administrator. Tick **Air-gapped** while installing.
 - **macOS:** carry the `.dmg` and `SHA256SUMS` inside. Apple's check travels inside it, so it opens without asking
   Apple. `kubectl` or `oc` has to be on the computer already.
 - **Linux:** carry the `.tar.gz` and `SHA256SUMS` inside and install by hand as above. `kubectl` or `oc`

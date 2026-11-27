@@ -2557,6 +2557,14 @@ pub(crate) struct Prefs {
     update_last: i64,
     update_latest: String,
     update_skip: String,
+    /// When GitHub was last asked by itself, answered or not (clock time).
+    update_tried: i64,
+    /// Tries in a row that got no answer.
+    update_fails: u32,
+    /// Kubedog itself asks the internet for nothing.
+    airgapped: bool,
+    /// It was switched on by Kubedog, after days without an answer; an answer switches it off again.
+    airgapped_auto: bool,
     /// Kubeconfig files Kubedog reads, in order (first one wins on a name clash).
     kubeconfigs: Vec<KubeFile>,
     /// Contexts hidden from the start page (Kubedog only; the files aren't touched).
@@ -2660,6 +2668,10 @@ impl Default for Prefs {
             update_last: 0,
             update_latest: String::new(),
             update_skip: String::new(),
+            update_tried: 0,
+            update_fails: 0,
+            airgapped: false,
+            airgapped_auto: false,
             kubeconfigs: vec![],
             hidden_contexts: vec![],
             startup: "reconnect".into(),
@@ -2727,6 +2739,10 @@ fn prefs_from_json(v: &Value) -> Prefs {
         update_last: v["update_last"].as_i64().unwrap_or(0),
         update_latest: v["update_latest"].as_str().unwrap_or("").to_string(),
         update_skip: v["update_skip"].as_str().unwrap_or("").to_string(),
+        update_tried: v["update_tried"].as_i64().unwrap_or(0),
+        update_fails: v["update_fails"].as_u64().unwrap_or(0).min(1000) as u32,
+        airgapped: v["airgapped"].as_bool().unwrap_or(false),
+        airgapped_auto: v["airgapped"].as_bool().unwrap_or(false) && v["airgapped_auto"].as_bool().unwrap_or(false),
         kubeconfigs: v["kubeconfigs"]
             .as_array()
             .map(|a| {
@@ -2852,6 +2868,10 @@ fn prefs_to_json(p: &Prefs) -> Value {
         "update_last": p.update_last,
         "update_latest": p.update_latest,
         "update_skip": p.update_skip,
+        "update_tried": p.update_tried,
+        "update_fails": p.update_fails,
+        "airgapped": p.airgapped,
+        "airgapped_auto": p.airgapped_auto,
         "kubeconfigs": p.kubeconfigs.iter().map(|f| serde_json::json!({"path": f.path, "enabled": f.enabled, "managed": f.managed})).collect::<Vec<_>>(),
         "hidden_contexts": p.hidden_contexts,
         "sidebar": p.sidebar,

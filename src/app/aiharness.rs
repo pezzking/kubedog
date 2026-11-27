@@ -46,7 +46,10 @@ fn places() -> Vec<PathBuf> {
         v.push(h.join(p));
     }
     v.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].map(PathBuf::from));
-    v.retain(|p| p.is_absolute());
+    // What mise installed (the harness itself, or the node it needs): the programs, not mise's stand-ins for them.
+    v.extend(crate::kube::mise_dirs());
+    let shims = crate::kube::mise_installs().with_file_name("shims");
+    v.retain(|p| p.is_absolute() && *p != shims);
     let mut seen = std::collections::HashSet::new();
     v.retain(|p| seen.insert(p.clone()));
     v
@@ -54,7 +57,7 @@ fn places() -> Vec<PathBuf> {
 
 pub(super) fn find(name: &str) -> Option<PathBuf> {
     let names: Vec<String> = if cfg!(windows) { vec![format!("{name}.exe"), format!("{name}.cmd")] } else { vec![name.to_string()] };
-    places().into_iter().flat_map(|p| names.iter().map(move |n| p.join(n)).collect::<Vec<_>>()).find(|p| p.is_file())
+    places().into_iter().flat_map(|p| names.iter().map(move |n| p.join(n)).collect::<Vec<_>>()).find(|p| p.is_file() && !crate::kube::mise_shim(p))
 }
 
 /// Only what it needs to run and find its own login: no KUBECONFIG, no keys.
@@ -97,6 +100,11 @@ pub(super) fn codex_args(model: &str, dir: &Path, features: &[String]) -> Vec<St
 
 /// On macOS the system keeps it from reading anything of yours but its own folder.
 pub(super) fn wall(kind: Kind, home: &Path) -> Option<String> {
+    wall_with(kind, home, &crate::kube::mise_installs())
+}
+
+/// `mise`: the folder of programs mise installed, where the harness itself may be.
+fn wall_with(kind: Kind, home: &Path, mise: &Path) -> Option<String> {
     if !cfg!(target_os = "macos") || !Path::new("/usr/bin/sandbox-exec").is_file() {
         return None;
     }
@@ -117,6 +125,11 @@ pub(super) fn wall(kind: Kind, home: &Path) -> Option<String> {
         }
         Kind::Own => return None,
     };
+    let mut allow = allow;
+    // Programs only; mise's settings (which can hold values) stay out of reach.
+    if let Some(m) = Some(mise.display().to_string()).filter(|m| m.starts_with('/') && !m.contains(['"', '\\'])) {
+        allow.push(format!("(subpath \"{m}\")"));
+    }
     Some(format!("(version 1)(allow default)(deny file-read-data (subpath \"{h}\") (subpath \"/Volumes\"))(allow file-read-data {})(deny file-read-data {})", allow.join(" "), deny.join(" ")))
 }
 
@@ -599,16 +612,19 @@ mod tests {
         // A made-up home with a made-up kubeconfig.
         let w = Work::new().unwrap();
         let h = w.0.join("home");
-        for d in [".kube", ".codex/sessions"] {
+        for d in [".kube", ".codex/sessions", ".local/share/mise/installs/claude/1.2.3", ".config/mise"] {
             std::fs::create_dir_all(h.join(d)).unwrap();
         }
-        for f in [".kube/config", ".codex/auth.json", ".codex/sessions/a"] {
+        for f in [".kube/config", ".codex/auth.json", ".codex/sessions/a", ".local/share/mise/installs/claude/1.2.3/claude", ".config/mise/config.toml"] {
             std::fs::write(h.join(f), "made up").unwrap();
         }
-        let p = wall(Kind::Codex, &h).unwrap();
+        let p = wall_with(Kind::Codex, &h, &h.join(".local/share/mise/installs")).unwrap();
         let cat = |f: &str| Command::new("/usr/bin/sandbox-exec").arg("-p").arg(&p).arg("/bin/cat").arg(h.join(f)).stderr(Stdio::null()).output().unwrap().stdout;
         assert_eq!(cat(".codex/auth.json"), b"made up");
         assert!(cat(".kube/config").is_empty() && cat(".codex/sessions/a").is_empty());
+        // A program mise installed can be read (so started); mise's settings can't.
+        assert_eq!(cat(".local/share/mise/installs/claude/1.2.3/claude"), b"made up");
+        assert!(cat(".config/mise/config.toml").is_empty());
         assert!(wall(Kind::Own, &h).is_none());
     }
 }

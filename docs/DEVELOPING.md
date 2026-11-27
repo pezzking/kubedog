@@ -59,7 +59,7 @@ platform-specific.
 | `src/app.rs` | The window: start-up, background work, lists, object pages, dialogs, settings storage, shortcuts |
 | `src/app/clusters.rs` | Start page, kubeconfig files, cluster names, namespaces per cluster |
 | `src/app/relogin.rs` | A cluster whose login has ended: the card that says so, and `oc login --web` for OpenShift |
-| `src/app/update.rs` | Asking GitHub once a day for the newest version, and saying how to update |
+| `src/app/update.rs` | Asking GitHub once a day for the newest version, saying how to update, and Air-gapped (never asking) |
 | `src/app/settings.rs` | The Settings page (General, Clusters, Kubeconfig files, Grafana, Terminal, Logs, Shortcuts, About) |
 | `src/app/dash.rs` | Cluster and Workloads overview dashboards |
 | `src/app/nodeview.rs` | A node's page: gauges, history, allocation, busiest pods |
@@ -140,6 +140,7 @@ reads from clusters and never saves settings. Environment variables choose what 
   container only run with `KUBEDOG_SHOT_EXEC=1` (`KUBEDOG_SHOT_FILES=container`, `_PATH`, `_FILE`, `_DF=container`)
 - `KUBEDOG_SHOT_RELOGIN=oc` (or `none`: no oc on the computer) shows the card of a login that has ended, with a made-up OpenShift address; oc is never started in a screenshot
 - `KUBEDOG_SHOT_UPDATE=9.9.9` makes up a newer version for the top bar and Settings > About; GitHub is never asked in a screenshot
+- `KUBEDOG_SHOT_AIRGAPPED=on|auto|forced` shows Settings > About as air-gapped: by hand, by itself, or by the installation
 - `KUBEDOG_SHOT_ZOOM=0.6` (see more of a long page), `KUBEDOG_SHOT_SCROLL=600`, `KUBEDOG_SHOT_THRESHOLD=50`
 
 - `KUBEDOG_SHOT_AI=1` (or `confirm`, `look`, or `chat` for the chat about a page) shows the AI panel with a made-up answer; nothing is ever asked in a screenshot

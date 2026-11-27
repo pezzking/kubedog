@@ -154,7 +154,56 @@ fn search_paths() -> Vec<PathBuf> {
     if let Some(p) = std::env::var_os("PATH") {
         v.extend(std::env::split_paths(&p));
     }
+    // Last: what mise installed. Its programs are on the PATH only in a shell mise was switched on in, which an
+    // app started from the Dock or the Start menu isn't.
+    v.extend(mise_dirs());
     v
+}
+
+/// Where mise (a tool that installs tools) keeps what it installed.
+pub fn mise_installs() -> PathBuf {
+    let set = |k: &str| std::env::var_os(k).map(PathBuf::from).filter(|p| p.is_absolute());
+    let h = home().unwrap_or_default();
+    let usual = || if cfg!(windows) { set("LOCALAPPDATA").unwrap_or_else(|| h.join("AppData/Local")).join("mise") } else { h.join(".local/share/mise") };
+    set("MISE_DATA_DIR").or_else(|| set("XDG_DATA_HOME").filter(|_| !cfg!(windows)).map(|p| p.join("mise"))).unwrap_or_else(usual).join("installs")
+}
+
+/// The folders with the programs mise installed, looked up once.
+pub fn mise_dirs() -> Vec<PathBuf> {
+    static DIRS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+    DIRS.get_or_init(|| Some(mise_installs()).filter(|m| m.is_absolute()).map(|m| mise_dirs_in(&m)).unwrap_or_default()).clone()
+}
+
+/// A version as numbers, so 2.10 comes after 2.9.
+fn version_key(name: &str) -> Vec<u64> {
+    name.split(|c: char| !c.is_ascii_digit()).filter(|x| !x.is_empty()).map(|x| x.parse().unwrap_or(u64::MAX)).collect()
+}
+
+/// Per tool in mise's folder: the version mise calls the latest (or the highest there is), and in it the folders
+/// that hold programs. The programs themselves, not mise's stand-ins for them.
+pub fn mise_dirs_in(installs: &std::path::Path) -> Vec<PathBuf> {
+    let mut tools: Vec<PathBuf> = std::fs::read_dir(installs).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    tools.sort();
+    let mut out = vec![];
+    for tool in tools.into_iter().take(500) {
+        let latest = tool.join("latest");
+        let v = if latest.is_dir() {
+            latest
+        } else {
+            let mut vs: Vec<PathBuf> = std::fs::read_dir(&tool).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+            vs.sort_by_key(|p| version_key(&p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
+            let Some(v) = vs.pop() else { continue };
+            v
+        };
+        out.extend(["bin", "node_modules/.bin"].iter().map(|d| v.join(d)).filter(|d| d.is_dir()));
+        out.push(v);
+    }
+    out
+}
+
+/// mise's stand-in for a program: a link to mise itself, which needs mise's settings to find the real one.
+pub fn mise_shim(p: &std::path::Path) -> bool {
+    p.is_symlink() && std::fs::canonicalize(p).ok().and_then(|r| r.file_stem().map(|n| n == "mise")).unwrap_or(false)
 }
 
 /// Kubedog's own folder, where the Windows installer puts the programs it brings along.
@@ -172,7 +221,7 @@ pub fn find_program(name: &str) -> Option<PathBuf> {
     search_paths()
         .into_iter()
         .map(|d| d.join(&file))
-        .find(|p| p.is_file())
+        .find(|p| p.is_file() && !mise_shim(p))
 }
 
 /// PATH for child processes: a Finder-launched app gets a bare PATH, but
@@ -582,5 +631,31 @@ mod wsl_tests {
         // Without WSL: as it always was.
         let plain = Kubectl { bin: Some("/bin/echo".into()), kubeconfig: None, helm: None, cnpg: None, wsl: None };
         assert_eq!(plain.program().unwrap(), ("/bin/echo".to_string(), vec![]));
+    }
+
+    #[test]
+    fn programs_mise_installed_are_found() {
+        let i = std::env::temp_dir().join(format!("kubedog-mise-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&i);
+        assert!(mise_dirs_in(&i).is_empty());
+        for d in ["kubectl/1.9.0", "kubectl/1.10.0", "helm/3.1.0/bin", "helm/4.0.0/bin", "npm-made-up/1.0.0/node_modules/.bin", "empty"] {
+            std::fs::create_dir_all(i.join(d)).unwrap();
+        }
+        std::fs::write(i.join("kubectl/.mise.backend.toml"), "").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("./3.1.0", i.join("helm/latest")).unwrap();
+        let helm = if cfg!(unix) { "helm/latest" } else { "helm/4.0.0" };
+        // The highest version by numbers (1.10 after 1.9), what mise calls the latest before that, and the folders
+        // inside that hold programs.
+        assert_eq!(mise_dirs_in(&i), [i.join(helm).join("bin"), i.join(helm), i.join("kubectl/1.10.0"), i.join("npm-made-up/1.0.0/node_modules/.bin"), i.join("npm-made-up/1.0.0")]);
+        // mise's stand-in is a link to mise itself: not taken for the program.
+        #[cfg(unix)]
+        {
+            std::fs::write(i.join("mise"), "").unwrap();
+            std::fs::write(i.join("kubectl/1.10.0/kubectl"), "").unwrap();
+            std::os::unix::fs::symlink(i.join("mise"), i.join("empty/kubectl")).unwrap();
+            assert!(mise_shim(&i.join("empty/kubectl")) && !mise_shim(&i.join("kubectl/1.10.0/kubectl")) && !mise_shim(&i.join("none")) && !mise_shim(&i.join("mise")));
+        }
+        let _ = std::fs::remove_dir_all(&i);
     }
 }

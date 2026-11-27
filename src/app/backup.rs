@@ -5,7 +5,7 @@ use work::said;
 
 /// What stays with the computer it was made on: what was open, where its programs are, which logins its keychain
 /// holds, and which clusters start with changes allowed (a file never takes protection away).
-const LOCAL: [&str; 10] = ["kubeconfigs", "session", "contexts", "kubectl_path", "logins", "open_at_start", "open_all", "update_last", "update_latest", "update_skip"];
+const LOCAL: [&str; 13] = ["kubeconfigs", "session", "contexts", "kubectl_path", "logins", "open_at_start", "open_all", "update_last", "update_latest", "update_skip", "update_tried", "update_fails", "airgapped_auto"];
 
 #[derive(Default)]
 pub(super) struct Backup {
@@ -21,6 +21,8 @@ pub(super) fn export_json(p: &Prefs) -> Value {
     let mut s = prefs_to_json(p);
     if let Some(m) = s.as_object_mut() {
         m.retain(|k, _| !LOCAL.contains(&k.as_str()));
+        // Only an Air-gapped chosen by hand travels: one Kubedog switched on by itself belongs to that computer.
+        m.insert("airgapped".into(), (p.airgapped && !p.airgapped_auto).into());
     }
     let files: Vec<Value> = p.kubeconfigs.iter().filter(|f| !f.managed).map(|f| serde_json::json!({"path": f.path, "enabled": f.enabled})).collect();
     serde_json::json!({"kubedog_settings": 1, "version": env!("CARGO_PKG_VERSION"), "settings": s, "kubeconfig_files": files})
@@ -42,6 +44,10 @@ pub(super) fn import_into(now: &Prefs, file: &Value, exists: &dyn Fn(&str) -> bo
     // Nor does a file make this computer ask the internet for anything it was told not to.
     if !now.update_check {
         j["update_check"] = false.into();
+    }
+    // A file can make this computer air-gapped, never the other way round.
+    if now.airgapped {
+        j["airgapped"] = true.into();
     }
     let (mut added, mut gone) = (0, 0);
     let mut files = j["kubeconfigs"].as_array().cloned().unwrap_or_default();
@@ -98,7 +104,7 @@ impl KubedogApp {
                 let what = what.clone();
                 ui.add_space(8.0);
                 said(ui, &what, TEXT_DEFAULT());
-                settings::hint(ui, "Your settings are replaced by the file's. What stays as it is here: your kubeconfig files, logins, which clusters start with changes allowed, and AI and the look for a new version stay off unless they're on here.");
+                settings::hint(ui, "Your settings are replaced by the file's. What stays as it is here: your kubeconfig files, logins, which clusters start with changes allowed, and AI and the look for a new version stay off unless they're on here, and Air-gapped stays on when it's on here.");
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if button(ui, "Replace my settings", true, false) {
@@ -149,7 +155,14 @@ impl KubedogApp {
     }
 
     fn backup_apply(&mut self) {
-        let Some((p, _)) = self.backup.waiting.take() else { return };
+        let Some((mut p, _)) = self.backup.waiting.take() else { return };
+        // What changed here since the file was read stays: a file never switches Air-gapped off or the look on.
+        let now = &self.prefs;
+        p.airgapped |= now.airgapped;
+        p.airgapped_auto = now.airgapped && now.airgapped_auto;
+        p.update_check &= now.update_check;
+        (p.update_tried, p.update_fails, p.update_last) = (now.update_tried, now.update_fails, now.update_last);
+        (p.update_latest, p.update_skip) = (now.update_latest.clone(), now.update_skip.clone());
         self.prefs = *p;
         crate::theme::install_font(&self.egui_ctx, &self.prefs.font);
         self.apply_theme();
@@ -211,6 +224,24 @@ mod tests {
         off["settings"]["update_check"] = false.into();
         assert!(!import_into(&here, &off, &|_| false).unwrap().0.update_check);
         assert!(import_into(&here, &file, &|_| false).unwrap().0.update_check);
+        // Air-gapped: a file can switch it on, never off.
+        assert!(!import_into(&here, &file, &|_| false).unwrap().0.airgapped);
+        let mut gap = file.clone();
+        gap["settings"]["airgapped"] = true.into();
+        gap["settings"]["airgapped_auto"] = true.into();
+        let got = import_into(&here, &gap, &|_| false).unwrap().0;
+        assert!(got.airgapped && !got.airgapped_auto);
+        // Switched on by Kubedog itself, it stays with the computer it happened on.
+        let mut auto = Prefs::default();
+        (auto.airgapped, auto.airgapped_auto) = (true, true);
+        assert_eq!(export_json(&auto)["settings"]["airgapped"], false);
+        assert!(!import_into(&Prefs::default(), &export_json(&auto), &|_| false).unwrap().0.airgapped);
+        auto.airgapped_auto = false;
+        assert!(import_into(&Prefs::default(), &export_json(&auto), &|_| false).unwrap().0.airgapped);
+        here.airgapped = true;
+        here.airgapped_auto = true;
+        let got = import_into(&here, &file, &|_| false).unwrap().0;
+        assert!(got.airgapped && got.airgapped_auto);
         // Where AI is on already, the file's AI settings are taken as they are.
         here.ai.on = true;
         assert!(import_into(&here, &file, &|_| false).unwrap().0.ai.on);

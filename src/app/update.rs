@@ -7,16 +7,21 @@ const LATEST: &str = "https://api.github.com/repos/pezzking/kubedog/releases/lat
 /// Where the downloads are, opened in the browser on a click.
 const PAGE: &str = "https://github.com/pezzking/kubedog/releases/latest";
 const DAY: i64 = 24 * 3600;
-/// After a try that got no answer, the next one waits this long.
-const AGAIN: i64 = 3600;
+/// After this many tries in a row without an answer (a day apart), Kubedog stops asking by itself.
+const GIVE_UP: u32 = 3;
+/// A file with this name next to the program (the Windows installer can put it there) makes Kubedog air-gapped.
+const MARK: &str = "airgapped";
 
 #[derive(Default)]
 pub(super) struct Update {
     /// The answer of the request that runs, when it's there.
-    got: Arc<Mutex<Option<Result<String, String>>>>,
+    /// An error says what went wrong, and whether GitHub was reached at all.
+    got: Arc<Mutex<Option<Result<String, (String, bool)>>>>,
     asking: bool,
-    /// When this run last tried (clock time), so a computer without internet isn't asked again and again.
-    tried: i64,
+    /// The request that runs was asked for with a click.
+    by_hand: bool,
+    /// Air-gapped by how Kubedog was installed or started; looked at once, at the first use.
+    forced: Option<bool>,
     /// What the last try by hand said, for Settings.
     said: Option<(String, bool)>,
 }
@@ -51,9 +56,26 @@ pub(super) fn latest_in(answer: &Value) -> Option<String> {
     Some(format!("{}.{}.{}", p[0], p[1], p[2]))
 }
 
-/// A day since the last answer (or a clock that went back), and an hour since the last try without one.
+/// A day since the last answer and since the last try, answered or not (or a clock that went back).
 pub(super) fn due(now: i64, last: i64, tried: i64) -> bool {
-    (last <= 0 || now < last || now - last >= DAY) && (tried <= 0 || now < tried || now - tried >= AGAIN)
+    (last <= 0 || now < last || now - last >= DAY) && (tried <= 0 || now < tried || now - tried >= DAY)
+}
+
+/// Whether the installation says air-gapped: `KUBEDOG_AIRGAPPED` set to something that isn't "no", or the file.
+pub(super) fn forced_by(env: Option<&str>, file: bool) -> bool {
+    match env.map(|e| e.trim().to_ascii_lowercase()) {
+        Some(e) if !e.is_empty() => !matches!(e.as_str(), "0" | "no" | "false" | "off"),
+        _ => file,
+    }
+}
+
+/// After a try by itself: the tries without an answer in a row, and whether that is enough to stop asking.
+pub(super) fn after_try(answered: bool, fails: u32) -> (u32, bool) {
+    if answered {
+        return (0, false);
+    }
+    let n = fails.saturating_add(1);
+    (n, n >= GIVE_UP)
 }
 
 /// From where the program is: Homebrew's folders mean Homebrew updates it. The Mac app sits in Applications either
@@ -71,7 +93,7 @@ pub(super) fn how(exe: &str, cask: bool) -> How {
 
 /// A proxy named in the environment (HTTPS_PROXY) is used, as a browser would: GitHub is outside, unlike what the
 /// other requests of Kubedog talk to.
-fn ask() -> Result<String, String> {
+fn ask() -> Result<String, (String, bool)> {
     let agent = ureq::Agent::config_builder()
         .https_only(true)
         .max_redirects(0)
@@ -82,12 +104,12 @@ fn ask() -> Result<String, String> {
         .tls_config(ureq::tls::TlsConfig::builder().root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
         .build()
         .new_agent();
-    let mut resp = agent.get(LATEST).header("Accept", "application/vnd.github+json").call().map_err(|_| "GitHub can't be reached from this computer.".to_string())?;
+    let mut resp = agent.get(LATEST).header("Accept", "application/vnd.github+json").call().map_err(|_| ("GitHub can't be reached from this computer.".to_string(), false))?;
     if resp.status().as_u16() != 200 {
-        return Err(format!("GitHub answered {}.", resp.status().as_u16()));
+        return Err((format!("GitHub answered {}.", resp.status().as_u16()), true));
     }
-    let text = resp.body_mut().with_config().limit(1024 * 1024).read_to_string().map_err(|_| "GitHub's answer couldn't be read.".to_string())?;
-    serde_json::from_str::<Value>(&text).ok().as_ref().and_then(latest_in).ok_or_else(|| "GitHub's answer names no version.".to_string())
+    let text = resp.body_mut().with_config().limit(1024 * 1024).read_to_string().map_err(|_| ("GitHub's answer couldn't be read.".to_string(), true))?;
+    serde_json::from_str::<Value>(&text).ok().as_ref().and_then(latest_in).ok_or_else(|| ("GitHub's answer names no version.".to_string(), true))
 }
 
 fn now() -> i64 {
@@ -103,6 +125,32 @@ impl KubedogApp {
         Some(self.prefs.update_latest.clone()).filter(|v| self.prefs.update_check && newer(v, env!("CARGO_PKG_VERSION")))
     }
 
+    /// Air-gapped by the installation (not by the switch in Settings).
+    fn airgap_forced(&mut self) -> bool {
+        if self.screenshot.is_some() {
+            return std::env::var("KUBEDOG_SHOT_AIRGAPPED").as_deref() == Ok("forced");
+        }
+        *self.update.forced.get_or_insert_with(|| {
+            let file = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(MARK).exists())).unwrap_or(false);
+            forced_by(std::env::var("KUBEDOG_AIRGAPPED").ok().as_deref(), file)
+        })
+    }
+
+    /// Kubedog itself asks the internet for nothing.
+    pub(super) fn airgapped(&mut self) -> bool {
+        self.airgap_forced() || self.prefs.airgapped
+    }
+
+    /// For Settings: by the installation, switched on, and switched on by itself. A screenshot can make it up.
+    fn airgap_state(&mut self) -> (bool, bool, bool) {
+        let forced = self.airgap_forced();
+        if self.screenshot.is_some() {
+            let v = std::env::var("KUBEDOG_SHOT_AIRGAPPED").unwrap_or_default();
+            return (forced, forced || v == "on" || v == "auto", v == "auto");
+        }
+        (forced, forced || self.prefs.airgapped, self.prefs.airgapped && self.prefs.airgapped_auto)
+    }
+
     /// Every frame: takes an answer that came, and asks when a day has passed. Never in a screenshot.
     pub(super) fn update_tick(&mut self) {
         if self.screenshot.is_some() {
@@ -111,23 +159,51 @@ impl KubedogApp {
         if self.update.asking {
             let Some(got) = self.update.got.lock().ok().and_then(|mut g| g.take()) else { return };
             self.update.asking = false;
-            let by_hand = self.update.said.take().is_some();
+            let by_hand = std::mem::take(&mut self.update.by_hand);
+            self.update.said = None;
             match got {
                 Ok(v) => {
                     self.prefs.update_latest = v.clone();
                     self.prefs.update_last = now();
+                    self.prefs.update_fails = 0;
+                    // GitHub answers, so this computer isn't cut off after all.
+                    if self.prefs.airgapped_auto {
+                        self.prefs.airgapped = false;
+                        self.prefs.airgapped_auto = false;
+                    }
                     self.save();
                     if by_hand {
                         self.update.said = Some(if newer(&v, env!("CARGO_PKG_VERSION")) { (format!("Kubedog {v} is available."), false) } else { ("You have the newest version.".into(), false) });
                     }
                 }
                 // Not said unless it was asked by hand: no internet is normal in many places.
-                Err(e) if by_hand => self.update.said = Some((e, true)),
-                Err(_) => {}
+                // GitHub was reached but gave nothing to use (too many requests from this address, say): there
+                // is internet, so this doesn't count towards stopping.
+                Err((e, true)) => {
+                    self.prefs.update_fails = 0;
+                    if self.prefs.airgapped_auto {
+                        self.prefs.airgapped = false;
+                        self.prefs.airgapped_auto = false;
+                    }
+                    self.save();
+                    if by_hand {
+                        self.update.said = Some((e, true));
+                    }
+                }
+                Err((e, false)) if by_hand => self.update.said = Some((e, true)),
+                Err(_) => {
+                    let (fails, stop) = after_try(false, self.prefs.update_fails);
+                    self.prefs.update_fails = fails;
+                    if stop && !self.prefs.airgapped {
+                        self.prefs.airgapped = true;
+                        self.prefs.airgapped_auto = true;
+                    }
+                    self.save();
+                }
             }
             return;
         }
-        if self.prefs.update_check && due(now(), self.prefs.update_last, self.update.tried) {
+        if self.prefs.update_check && due(now(), self.prefs.update_last, self.prefs.update_tried) && !self.airgapped() {
             self.update_ask(false);
         }
     }
@@ -136,8 +212,16 @@ impl KubedogApp {
         if self.screenshot.is_some() || self.update.asking {
             return;
         }
+        // By hand is only offered where the person may: never when the installation says air-gapped.
+        if self.airgap_forced() {
+            return;
+        }
         self.update.asking = true;
-        self.update.tried = now();
+        self.update.by_hand = by_hand;
+        if !by_hand {
+            self.prefs.update_tried = now();
+            self.save();
+        }
         self.update.said = by_hand.then(|| (String::new(), false));
         let (got, ctx) = (self.update.got.clone(), self.egui_ctx.clone());
         std::thread::spawn(move || {
@@ -169,15 +253,47 @@ impl KubedogApp {
     pub(super) fn settings_update(&mut self, ui: &mut Ui) {
         ui.add_space(10.0);
         card(ui, |ui| {
-            ui.label(RichText::new("Updates").size(z(15.0)).strong().color(TEXT_DEFAULT()));
+            ui.label(RichText::new("Internet and updates").size(z(15.0)).strong().color(TEXT_DEFAULT()));
             ui.add_space(4.0);
-            let mut on = self.prefs.update_check;
-            if ui.checkbox(&mut on, "Look for a new version once a day").changed() {
-                self.prefs.update_check = on;
+            let (forced, mut gap, auto) = self.airgap_state();
+            if ui.add_enabled(!forced, egui::Checkbox::new(&mut gap, "Air-gapped: Kubedog never asks the internet by itself")).changed() {
+                self.prefs.airgapped = gap;
+                self.prefs.airgapped_auto = false;
+                // Switched off by hand: start counting again, and look soon.
+                self.prefs.update_fails = 0;
+                self.prefs.update_tried = 0;
                 self.update.said = None;
                 self.save();
             }
-            settings::hint(ui, "Kubedog asks github.com which version is the newest. Nothing about you, this computer or your clusters is sent, and nothing is installed by itself. Without internet nothing happens.");
+            if forced {
+                settings::hint(ui, "Set by how Kubedog was installed: a file named airgapped next to the program, or KUBEDOG_AIRGAPPED. It can't be switched off here.");
+            } else if auto {
+                work::said(ui, "Switched on by itself: github.com couldn't be reached three times, a day apart. Reaching it switches this off again.", WARNING());
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if self.update.asking {
+                        ui.spinner();
+                    } else if button(ui, "Look now", false, false) {
+                        self.update_ask(true);
+                    }
+                    ui.label(RichText::new("Asks github.com once, now.").color(TEXT_MUTED()));
+                });
+                if let Some((t, _)) = self.update.said.as_ref().filter(|s| !s.0.is_empty()) {
+                    ui.add_space(6.0);
+                    work::said(ui, t, WARNING());
+                }
+            } else {
+                settings::hint(ui, "The only thing Kubedog asks the internet without a click is the look for a new version. What you set up yourself (AI, Grafana, Proxmox, Elasticsearch) still goes where you point it.");
+            }
+            ui.add_space(10.0);
+            let mut on = self.prefs.update_check && !gap;
+            if ui.add_enabled(!gap, egui::Checkbox::new(&mut on, "Look for a new version once a day")).changed() {
+                self.prefs.update_check = on;
+                self.prefs.update_fails = 0;
+                self.update.said = None;
+                self.save();
+            }
+            settings::hint(ui, "Kubedog asks github.com which version is the newest. Nothing about you, this computer or your clusters is sent, and nothing is installed by itself. After a look without an answer it waits a day; after three of those it stops and switches Air-gapped on.");
             ui.add_space(8.0);
             match self.update_there() {
                 Some(v) => {
@@ -210,7 +326,7 @@ impl KubedogApp {
                         self.save();
                     }
                 }
-                None if self.prefs.update_check => {
+                None if self.prefs.update_check && !gap => {
                     ui.horizontal(|ui| {
                         if self.update.asking {
                             ui.spinner();
@@ -260,9 +376,27 @@ mod tests {
         let now = 1_000_000;
         assert!(due(now, 0, 0) && due(now, now - DAY, 0) && due(now, 2_000_000, 0));
         assert!(!due(now, now - DAY + 1, 0) && !due(now, now, 0));
-        // No answer at the last try: not again within the hour, whatever the clock did in between.
-        assert!(!due(now, 0, now - 10) && !due(now, 0, now - AGAIN + 1));
-        assert!(due(now, 0, now - AGAIN) && due(now, 0, now + 50));
+        // After a try, answered or not: not again within the day, whatever the clock did in between.
+        assert!(!due(now, 0, now - 10) && !due(now, 0, now - DAY + 1) && !due(now, now - 2 * DAY, now - 3600));
+        assert!(due(now, 0, now - DAY) && due(now, 0, now + 50));
+    }
+
+    #[test]
+    fn three_tries_without_an_answer_stop_it() {
+        assert_eq!(after_try(false, 0), (1, false));
+        assert_eq!(after_try(false, 1), (2, false));
+        assert_eq!(after_try(false, 2), (3, true));
+        assert_eq!(after_try(false, u32::MAX), (u32::MAX, true));
+        assert_eq!(after_try(true, 2), (0, false));
+    }
+
+    #[test]
+    fn air_gapped_by_the_installation() {
+        assert!(forced_by(None, true) && !forced_by(None, false));
+        assert!(forced_by(Some("1"), false) && forced_by(Some("yes"), false) && forced_by(Some(" TRUE "), false));
+        // Said plainly in the environment, it goes before the file.
+        assert!(!forced_by(Some("0"), true) && !forced_by(Some("off"), true) && !forced_by(Some("No"), true));
+        assert!(forced_by(Some(""), true) && !forced_by(Some("  "), false));
     }
 
     #[test]

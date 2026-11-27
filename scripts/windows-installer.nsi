@@ -8,6 +8,8 @@
 ; It installs for the person who runs it, so it needs no administrator: the program goes in
 ; %LOCALAPPDATA%\Programs\Kubedog, with a Start menu entry and an entry under "Installed apps" to remove it.
 ; Settings (%APPDATA%\Kubedog) are left alone when Kubedog is removed.
+; Air-gapped: a tick in the list of parts, or /AIRGAPPED on the command line (with /S for an install without
+; questions), puts an empty file named "airgapped" next to the program. Kubedog then never asks the internet by itself.
 
 Unicode true
 SetCompressor /SOLID lzma
@@ -16,8 +18,11 @@ ManifestDPIAware true
 
 !include "MUI2.nsh"
 !include "x64.nsh"
+!include "Sections.nsh"
+!include "FileFunc.nsh"
 
 Name "Kubedog"
+Var StartDir
 OutFile "${OUT}"
 InstallDir "$LOCALAPPDATA\Programs\Kubedog"
 InstallDirRegKey HKCU "Software\Kubedog" "InstallDir"
@@ -37,20 +42,13 @@ VIAddVersionKey "LegalCopyright" "Apache License 2.0"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${ROOT}/LICENSE"
 !insertmacro MUI_PAGE_COMPONENTS
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE FolderChosen
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
-
-Function .onInit
-    ${IfNot} ${IsNativeAMD64}
-    ${AndIfNot} ${IsNativeARM64}
-        MessageBox MB_ICONSTOP "Kubedog needs 64-bit Windows (Intel/AMD or ARM). This computer runs 32-bit Windows."
-        Abort
-    ${EndIf}
-FunctionEnd
 
 !define UNINST "Software\Microsoft\Windows\CurrentVersion\Uninstall\Kubedog"
 
@@ -62,6 +60,8 @@ Section "Kubedog" SecMain
     ${Else}
         File "/oname=kubedog.exe" "${EXE_AMD64}"
     ${EndIf}
+    ; Put back below when its part is ticked.
+    Delete "$INSTDIR\airgapped"
     File "${ROOT}/LICENSE"
     File "${ROOT}/THIRD-PARTY.md"
     File "${NOTICES}"
@@ -103,13 +103,47 @@ Section "kubectl cnpg ${CNPG_VERSION} (for Postgres)" SecCnpg
     ${EndIf}
 SectionEnd
 
+Section /o "Air-gapped (never ask the internet)" SecAirgapped
+    FileOpen $0 "$INSTDIR\airgapped" w
+    FileClose $0
+SectionEnd
+
+Function .onInit
+    ${IfNot} ${IsNativeAMD64}
+    ${AndIfNot} ${IsNativeARM64}
+        MessageBox MB_ICONSTOP "Kubedog needs 64-bit Windows (Intel/AMD or ARM). This computer runs 32-bit Windows."
+        Abort
+    ${EndIf}
+    StrCpy $StartDir "$INSTDIR"
+    ; Air-gapped stays as it was when installing over an older Kubedog, and can be asked for on the command line.
+    ${If} ${FileExists} "$INSTDIR\airgapped"
+        !insertmacro SelectSection ${SecAirgapped}
+    ${EndIf}
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/AIRGAPPED" $1
+    ${IfNot} ${Errors}
+        !insertmacro SelectSection ${SecAirgapped}
+    ${EndIf}
+FunctionEnd
+
+; Another folder chosen than the one the parts were shown for: an air-gapped mark that is there is kept.
+Function FolderChosen
+    ${If} "$INSTDIR" != "$StartDir"
+    ${AndIf} ${FileExists} "$INSTDIR\airgapped"
+        !insertmacro SelectSection ${SecAirgapped}
+    ${EndIf}
+FunctionEnd
+
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "The program itself."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecKubectl} "Kubedog reaches clusters through kubectl. This copy is only used when the computer has no kubectl or oc of its own; yours always goes first."
     !insertmacro MUI_DESCRIPTION_TEXT ${SecCnpg} "The CloudNativePG plugin for kubectl. Kubedog's Postgres page uses it for the live state of a database cluster. This copy is only used when the computer has none of its own."
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecAirgapped} "For a computer without internet. Kubedog then never asks the internet by itself: it doesn't look for a new version. Without this tick it looks once a day, and stops by itself after three tries without an answer."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
+    Delete "$INSTDIR\airgapped"
     Delete "$INSTDIR\kubectl.exe"
     Delete "$INSTDIR\kubectl-cnpg.exe"
     Delete "$SMPROGRAMS\Kubedog.lnk"

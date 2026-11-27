@@ -133,8 +133,19 @@ The short version is in the [README](../README.md). This is the whole list.
   notice. The card can be put away with "Not now".
 - **A newer version is told, not installed** (Settings > About): once a day Kubedog asks github.com which version is
   the newest; nothing about you or your clusters is sent. When yours is older, the top bar says so, and Settings > About
-  gives the Homebrew line to run or opens the download page. One version can be skipped, the look can be switched off,
-  and without internet nothing happens.
+  gives the Homebrew line to run or opens the download page. One version can be skipped and the look can be switched
+  off. After a look without an answer Kubedog waits a day before the next.
+- **Air-gapped** (Settings > About): a switch that makes Kubedog never ask the internet by itself, which today means
+  it doesn't look for a new version. Kubedog switches it on by itself after three looks, a day apart, in which
+  github.com couldn't be reached, and says so there; **Look now** tries once more, and an answer switches it off again. An installation can fix it
+  on: the Windows installer has a tick for it (or `/AIRGAPPED` on its command line, with `/S` for no questions), which
+  puts an empty file named `airgapped` next to the program; `KUBEDOG_AIRGAPPED=1` does the same anywhere. Then the
+  switch can't be turned off in the app. A settings file can switch it on, never off. What you set up yourself (AI,
+  Grafana, Proxmox, Elasticsearch) still goes where you point it.
+- **Tools installed with mise are found**: `kubectl`, `oc`, `helm`, kubectl's plugins and the AI programs (Claude
+  Code, Codex). mise puts its programs on the PATH only inside a shell, which an app started from the Dock or the
+  Start menu isn't in, so Kubedog looks in mise's own folder: per tool the version mise calls the latest, and the
+  program itself rather than mise's stand-in for it.
 - **Settings as a file** (Settings > General): everything from Settings written to one file, the namespaces listed per
   cluster included, and read in again on another computer or after a reinstall. No password or key is in it. What a
   file never changes: your kubeconfig files (they go along by where they are, and are added when they're there),
