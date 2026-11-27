@@ -4375,7 +4375,9 @@ impl KubedogApp {
         let count = if shown == total { format!("{shown} {noun}") } else { format!("{shown} of {total} {noun}") };
         self.header(ui, kind.namespaced(), Some(count), true);
 
-        for (c, e) in &errors {
+        // Nodes refused, but Grafana shows this cluster's nodes below: nothing is missing, so nothing is said.
+        let answered: Vec<String> = if kind == Kind::Nodes { errors.iter().filter(|(c, e)| is_refusal(e) && !self.grafana_nodes(c).is_empty()).map(|x| x.0.clone()).collect() } else { vec![] };
+        for (c, e) in errors.iter().filter(|(c, _)| !answered.contains(c)) {
             Frame::new()
                 .fill(WARN_BG())
                 .corner_radius(CornerRadius::same(6))

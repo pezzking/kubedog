@@ -163,7 +163,8 @@ The short version is in the [README](../README.md). This is the whole list.
   definitions, nodes are shown as seen from your pods, Helm is read per namespace, and pages say what
   the account can't read.
 - **Nodes from a Grafana (optional, per cluster):** for accounts that may not read nodes, and for history.
-  Cards per node, what needs a look, a heat timeline up to 7 days, and a page per node. Set it up in
+  Cards per node, what needs a look, a heat timeline up to 7 days, and a page per node. Once Grafana shows a
+  cluster's nodes, the notice that your account can't list nodes is no longer shown for that cluster. Set it up in
   Settings > Special monitoring: address, login, data source (Prometheus with node exporter figures), and your own
   certificate authority (file, paste or drop). Reads only; certificates are always checked; the password
   is asked for once per run and kept in memory only.
