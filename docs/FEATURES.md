@@ -3,6 +3,8 @@
 The short version is in the [README](../README.md). This is the whole list.
 
 - **Clusters:** a start page with every context from your kubeconfig files.
+  - The highlighted block is the selected cluster, whose details are shown next to the list; the tick in its circle
+    says which clusters are picked to open. The two are apart: a click on a block selects, a click on a circle ticks.
   - Add more kubeconfig files, or paste a kubeconfig.
   - Give clusters short names and colours, and save groups of clusters to open together.
   - For accounts that can only see some namespaces, list them per cluster (wildcards allowed).

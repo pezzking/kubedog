@@ -478,7 +478,7 @@ impl KubedogApp {
                 app_mark(ui.painter(), r);
                 ui.label(RichText::new("Kubedog").size(z(22.0)).strong().color(TEXT_DEFAULT()));
             });
-            ui.label(RichText::new("Pick one or more clusters to open").size(z(13.0)).color(TEXT_SUBTLE()));
+            ui.label(RichText::new("Tick one or more clusters to open").size(z(13.0)).color(TEXT_SUBTLE()));
             ui.add_space(14.0);
             ui.horizontal(|ui| {
                 let w = ui.available_width() - 34.0;
@@ -507,9 +507,11 @@ impl KubedogApp {
                     let hidden = self.prefs.hidden_contexts.contains(&c.name);
                     let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), u(62.0)), Sense::click());
                     let p = ui.painter();
-                    let fill = if on { PICKED_BG() } else if focus || resp.hovered() { BG_HOVER() } else { BG_CARD() };
+                    // The block shows which cluster is selected (its details are on the right); the tick alone
+                    // shows which ones are picked to open. The two don't follow each other.
+                    let fill = if focus { PICKED_BG() } else if resp.hovered() { BG_HOVER() } else { BG_CARD() };
                     p.rect_filled(r, CornerRadius::same(10), fill);
-                    p.rect_stroke(r, CornerRadius::same(10), Stroke::new(if on { 1.5 } else { 1.0 }, if on { PRIMARY_TEXT() } else if focus { BORDER_DEFAULT() } else { BORDER_SUBTLE() }), egui::StrokeKind::Inside);
+                    p.rect_stroke(r, CornerRadius::same(10), Stroke::new(if focus { 1.5 } else { 1.0 }, if focus { PRIMARY_TEXT() } else { BORDER_SUBTLE() }), egui::StrokeKind::Inside);
                     p.rect_filled(egui::Rect::from_min_size(r.min, egui::vec2(4.0, r.height())), CornerRadius { nw: 10, sw: 10, ne: 0, se: 0 }, context_color(&c.name));
                     ctx_mark(p, egui::Rect::from_center_size(r.left_center() + egui::vec2(30.0, 0.0), egui::vec2(30.0, 30.0)), &c.name);
                     let tw = r.width() - 100.0;
@@ -547,20 +549,25 @@ impl KubedogApp {
                     } else {
                         p.circle_stroke(cc, 8.5, Stroke::new(1.2, if resp.hovered() || focus { TEXT_SUBTLE() } else { BORDER_DEFAULT() }));
                     }
+                    let on_circle = resp.hover_pos().map(|pp| pp.x > r.right() - 44.0).unwrap_or(false);
+                    if on_circle {
+                        p.circle_stroke(cc, 12.0, Stroke::new(1.0, TEXT_SUBTLE()));
+                    }
                     if resp.double_clicked() {
                         self.picker.insert(c.name.clone());
                         connect_now = true;
                     } else if resp.clicked() {
-                        // A click shows the details; clicking the circle (or Space) picks it.
-                        let on_circle = resp.interact_pointer_pos().map(|pp| pp.x > r.right() - 44.0).unwrap_or(false);
-                        if on_circle || self.picker_focus == i {
+                        // A click on the block selects it and shows its details; a click on the circle only
+                        // ticks or unticks it, whichever block is selected.
+                        if resp.interact_pointer_pos().map(|pp| pp.x > r.right() - 44.0).unwrap_or(false) {
                             if on {
                                 self.picker.remove(&c.name);
                             } else {
                                 self.picker.insert(c.name.clone());
                             }
+                        } else {
+                            self.picker_focus = i;
                         }
-                        self.picker_focus = i;
                     }
                     ui.add_space(8.0);
                 }
@@ -596,7 +603,7 @@ impl KubedogApp {
                 });
             });
             ui.add_space(6.0);
-            ui.label(RichText::new("Click a cluster for details · click its circle or press Space to pick it · Enter or double-click to connect · ⌘A all").size(z(11.0)).color(TEXT_PLACEHOLDER()));
+            ui.label(RichText::new("Click a cluster to select it and see its details · tick its circle (or Space) to pick it for opening · Enter or double-click to connect · ⌘A all").size(z(11.0)).color(TEXT_PLACEHOLDER()));
             // Groups: open several clusters at once (⌃1-9 for the first nine).
             let groups: Vec<(usize, Group, usize)> = self
                 .prefs
