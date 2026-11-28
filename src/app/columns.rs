@@ -66,6 +66,16 @@ pub(super) fn default_shown(kind: Kind) -> Vec<&'static str> {
     kind.columns().iter().copied().filter(|c| !(kind == Kind::Pods && *c == "Pod IP")).collect()
 }
 
+/// Whether a column that can be hidden is shown: by the saved choice; else, where only an order was saved (by a
+/// version in which every usual column was the standard), all the usual ones; else the standard ones.
+pub(super) fn shown_by(kind: Kind, saved: Option<&Vec<String>>, order_saved: bool, name: &str) -> bool {
+    match saved {
+        Some(s) if s.iter().any(|c| kind.all_columns().contains(&c.as_str())) => s.iter().any(|c| c == name),
+        _ if order_saved => kind.columns().contains(&name),
+        _ => default_shown(kind).contains(&name),
+    }
+}
+
 /// The saved order with unknown names dropped and missing ones put where they'd normally be.
 pub(super) fn full_order(kind: Kind, saved: Option<&Vec<String>>, shown: Option<&Vec<String>>) -> Vec<&'static str> {
     let base = default_order(kind);
@@ -119,10 +129,8 @@ impl KubedogApp {
         if is_fixed(name) {
             return true;
         }
-        match self.prefs.columns.get(&format!("{kind:?}")) {
-            Some(s) if s.iter().any(|c| kind.all_columns().contains(&c.as_str())) => s.iter().any(|c| c == name),
-            _ => default_shown(kind).contains(&name),
-        }
+        let k = format!("{kind:?}");
+        shown_by(kind, self.prefs.columns.get(&k), self.prefs.column_order.contains_key(&k), name)
     }
 
     /// The columns a list shows, in order.
@@ -190,7 +198,9 @@ impl KubedogApp {
             self.prefs.column_order.insert(key.clone(), names(&order));
         }
         let usual = default_shown(kind);
-        if shown.len() == usual.len() && shown.iter().all(|c| usual.contains(c)) {
+        // Left out only when nothing at all was changed: an order kept without them means "as it was before the
+        // standard columns changed" (see `shown_by`).
+        if shown.len() == usual.len() && shown.iter().all(|c| usual.contains(c)) && order == default_order(kind) {
             self.prefs.columns.remove(&key);
         } else {
             let shown: Vec<&str> = order.iter().copied().filter(|c| shown.contains(c)).collect();
@@ -406,6 +416,11 @@ mod tests {
         let shown: Vec<&str> = d.iter().copied().filter(|c| default_shown(Kind::Pods).contains(c)).collect();
         assert_eq!(shown, ["Ready", "Status", "Age", "Restarts", "CPU Usage", "Memory Usage", "Last Restart", "Last Restart Reason", "Node", "Controller"]);
         assert_eq!(default_order(Kind::Deployments).last(), Some(&"Age"));
+        // Nothing saved: no Pod IP. Only an order saved (by a version that showed it): it stays. A saved choice wins.
+        assert!(!shown_by(Kind::Pods, None, false, "Pod IP") && shown_by(Kind::Pods, None, false, "Age"));
+        assert!(shown_by(Kind::Pods, None, true, "Pod IP") && !shown_by(Kind::Pods, None, true, "Images"));
+        let own: Vec<String> = vec!["Status".into(), "Images".into()];
+        assert!(shown_by(Kind::Pods, Some(&own), true, "Images") && !shown_by(Kind::Pods, Some(&own), true, "Pod IP") && !shown_by(Kind::Pods, Some(&own), false, "Age"));
         assert_eq!(default_shown(Kind::Deployments), Kind::Deployments.columns());
         let mem = d.iter().position(|c| *c == "Memory Usage").unwrap();
         assert_eq!(&d[mem + 1..mem + 5], &["CPU Requests", "CPU Limits", "Memory Requests", "Memory Limits"]);

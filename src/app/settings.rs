@@ -27,7 +27,8 @@ impl KubedogApp {
 
     /// Settings from the start page, before any cluster is open: a way back instead of the top bar.
     pub(super) fn settings_at_start(&mut self, ui: &mut Ui) {
-        ui.add_space(u(30.0));
+        // The window has no title bar: it is moved by this strip.
+        drag_area(ui, ui.available_width(), u(30.0));
         ui.horizontal(|ui| {
             ui.add_space(10.0);
             if button(ui, "‹  Back to the clusters", false, false) || (ui.input(|i| i.key_pressed(Key::Escape)) && self.dialog.is_none() && !ui.ctx().memory(|m| m.focused().is_some())) {

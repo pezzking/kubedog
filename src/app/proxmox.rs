@@ -51,7 +51,7 @@ impl Conf {
     }
     /// What a secret was typed for: it's forgotten when any of this changes, and never sent elsewhere.
     fn binding(&self) -> String {
-        let d = ring::digest::digest(&ring::digest::SHA256, format!("{}\n{}\n{}{}", self.url, self.token, self.ca, if self.shared { "\nshared" } else { "" }).as_bytes());
+        let d = ring::digest::digest(&ring::digest::SHA256, format!("{}\n{}\n{}{}", self.url, self.token, super::grafana::trusted(&self.ca, self.shared), if self.shared { "\nshared" } else { "" }).as_bytes());
         d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 }

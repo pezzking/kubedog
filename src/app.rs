@@ -3604,6 +3604,7 @@ impl KubedogApp {
         };
         self.active = chosen;
         self.connected = true;
+        self.start_settings = false;
         // Changes allowed from the start where Settings says so (never in a picture, never with demo data).
         if self.screenshot.is_none() && !self.demo {
             for c in &self.active {
@@ -6881,6 +6882,8 @@ impl KubedogApp {
                         self.disconnect();
                     }
                 }
+                // Settings can be opened before a cluster is.
+                "settings" | "go:settings" if !self.connected => self.start_settings = true,
                 _ if !self.connected => self.toast("Connect to a cluster first.".into(), false),
                 "back" => self.back_pressed(),
                 "forward" => self.forward_pressed(),

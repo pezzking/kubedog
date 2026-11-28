@@ -304,72 +304,76 @@ impl KubedogApp {
 
     /// Starts Homebrew, after a click. Never in a screenshot.
     fn brew_start(&mut self, line: &'static str) {
-        if self.screenshot.is_some() || self.brew_state() == BrewState::Running {
+        if self.screenshot.is_some() || self.brew_state() == BrewState::Running || self.airgapped() {
             return;
         }
         let run = Brew { out: Arc::new(Mutex::new(String::new())), done: Arc::new(Mutex::new(None)) };
         let (out, done, ctx) = (run.out.clone(), run.done.clone(), self.egui_ctx.clone());
         self.update.brew = Some(run);
-        let say = |out: &Arc<Mutex<String>>, t: &str| {
+        let fail = |why: &str| {
             if let Ok(mut o) = out.lock() {
-                o.push_str(t);
-                o.push('\n');
-                // Only the end is shown; a long run doesn't pile up.
-                if o.len() > 40_000 {
-                    let cut = o.char_indices().map(|x| x.0).find(|i| *i >= o.len() - 20_000).unwrap_or(0);
-                    o.drain(..cut);
-                }
+                *o = why.to_string();
             }
-        };
-        let Some(brew) = crate::kube::find_program("brew") else {
-            say(&out, "Homebrew (brew) wasn't found on this computer.");
             if let Ok(mut d) = done.lock() {
                 *d = Some(false);
             }
-            return;
         };
+        let Some(brew) = crate::kube::find_program("brew") else { return fail("Homebrew (brew) wasn't found on this computer.") };
+        // What Homebrew says goes to a file, not to Kubedog: closing Kubedog meanwhile doesn't stop it halfway.
+        let log = std::env::temp_dir().join(format!("kubedog-homebrew-{}.log", std::process::id()));
+        let Ok(mut file) = std::fs::File::create(&log) else { return fail("A file for what Homebrew says couldn't be made.") };
         std::thread::spawn(move || {
-            use std::io::BufRead;
+            use std::io::Write;
+            let show = |out: &Arc<Mutex<String>>| {
+                // Only the end is kept, whatever is in it.
+                let bytes = std::fs::read(&log).unwrap_or_default();
+                let text = String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(20_000)..]).to_string();
+                if let Ok(mut o) = out.lock() {
+                    *o = text;
+                }
+                ctx.request_repaint();
+            };
+            let steps = brew_steps(line);
+            let last = steps.len() - 1;
             let mut ok = true;
-            for args in brew_steps(line) {
-                say(&out, &format!("brew {}", args.join(" ")));
+            for (i, args) in steps.into_iter().enumerate() {
+                let _ = writeln!(file, "brew {}", args.join(" "));
                 let mut c = std::process::Command::new(&brew);
                 crate::kube::quiet(&mut c);
                 c.args(&args).env("PATH", crate::kube::child_path()).env("HOMEBREW_NO_ENV_HINTS", "1").env("HOMEBREW_NO_COLOR", "1").env("NONINTERACTIVE", "1");
-                c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+                let (Ok(o), Ok(e)) = (file.try_clone(), file.try_clone()) else {
+                    ok = false;
+                    break;
+                };
+                c.stdin(std::process::Stdio::null()).stdout(o).stderr(e);
                 let mut child = match c.spawn() {
                     Ok(c) => c,
                     Err(e) => {
-                        say(&out, &format!("Homebrew couldn't be started: {e}"));
+                        let _ = writeln!(file, "Homebrew couldn't be started: {e}");
                         ok = false;
                         break;
                     }
                 };
-                let readers: Vec<_> = [child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>)]
-                    .into_iter()
-                    .flatten()
-                    .map(|s| {
-                        let (out, ctx) = (out.clone(), ctx.clone());
-                        std::thread::spawn(move || {
-                            for l in std::io::BufReader::new(s).lines().map_while(Result::ok) {
-                                if let Ok(mut o) = out.lock() {
-                                    o.push_str(&l);
-                                    o.push('\n');
-                                }
-                                ctx.request_repaint();
-                            }
-                        })
-                    })
-                    .collect();
-                let status = child.wait();
-                for r in readers {
-                    let _ = r.join();
-                }
-                if !status.map(|s| s.success()).unwrap_or(false) {
+                let status = loop {
+                    match child.try_wait() {
+                        Ok(Some(s)) => break s.success(),
+                        Ok(None) => {
+                            show(&out);
+                            std::thread::sleep(std::time::Duration::from_millis(400));
+                        }
+                        Err(_) => break false,
+                    }
+                };
+                // Reading the lists again fails when any one source can't be reached; Kubedog's may be fine, so
+                // only the update itself decides.
+                if !status && i < last {
+                    let _ = writeln!(file, "Homebrew couldn't read all of its lists again; trying the update anyway.");
+                } else if !status {
                     ok = false;
-                    break;
                 }
             }
+            show(&out);
+            let _ = std::fs::remove_file(&log);
             if let Ok(mut d) = done.lock() {
                 *d = Some(ok);
             }
@@ -379,6 +383,9 @@ impl KubedogApp {
 
     /// Starts Kubedog again (the newly installed one) and closes this one.
     fn restart(&mut self) {
+        if self.screenshot.is_some() {
+            return;
+        }
         let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         let started = match app_bundle(&exe) {
             Some(app) => std::process::Command::new("/usr/bin/open").args(["-n", app]).spawn(),
@@ -403,7 +410,7 @@ impl KubedogApp {
             });
         };
         match state {
-            BrewState::No if airgapped => {
+            BrewState::No | BrewState::Failed if airgapped => {
                 settings::hint(ui, "Homebrew installed this Kubedog. Close Kubedog and run this in a terminal:");
                 by_hand(ui);
             }

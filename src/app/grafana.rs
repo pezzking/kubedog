@@ -42,8 +42,10 @@ pub(super) fn set_shared(pem: &str) {
 /// The authorities a server's certificate is checked against: its own, and the shared ones when it says so.
 /// Empty: this computer's own list.
 pub(super) fn trusted(own: &str, shared: bool) -> String {
-    let all = if shared { SHARED.read().map(|s| s.clone()).unwrap_or_default() } else { String::new() };
-    joined(own, &all)
+    if !shared {
+        return own.to_string();
+    }
+    joined(own, &SHARED.read().map(|s| s.clone()).unwrap_or_default())
 }
 
 /// Two lists of certificates as one, without the same one twice.
@@ -67,13 +69,24 @@ fn keychain(ctx: &str) -> Result<keyring::Entry, String> {
 
 /// What goes into the keychain: the password with what it's for, so it's only used for that address and login.
 pub(super) fn kept_text(binding: &str, secret: &str) -> String {
-    serde_json::json!({"for": binding, "secret": secret}).to_string()
+    serde_json::json!({"for": mark(binding), "secret": secret}).to_string()
+}
+
+/// What a login is for, short: the keychain of some systems only takes a little text, and an authority is long.
+fn mark(binding: &str) -> String {
+    ring::digest::digest(&ring::digest::SHA256, binding.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Takes a cluster's kept Grafana login out of the keychain, in a thread (the system may ask the person).
+pub(super) fn unkeep(ctx: &str) {
+    let c = ctx.to_string();
+    std::thread::spawn(move || keychain(&c).and_then(|e| e.delete_credential().map_err(|e| e.to_string())));
 }
 
 /// The password from the keychain's text, if it was kept for this address and login.
 pub(super) fn kept_secret(text: &str, binding: &str) -> Option<String> {
     let v: Value = serde_json::from_str(text).ok()?;
-    (v["for"].as_str() == Some(binding)).then(|| v["secret"].as_str().map(String::from)).flatten().filter(|s| !s.is_empty())
+    (v["for"].as_str() == Some(mark(binding).as_str())).then(|| v["secret"].as_str().map(String::from)).flatten().filter(|s| !s.is_empty())
 }
 
 impl Conf {
@@ -85,8 +98,9 @@ impl Conf {
         Conf { url: s("url"), user: s("user"), token: v["token"].as_bool().unwrap_or(false), ca: s("ca"), uid: s("uid"), label: s("label"), keep: v["keep"].as_bool().unwrap_or(false), shared: v["shared"].as_bool().unwrap_or(false) }
     }
     /// What a typed password is for: it's forgotten when any of this changes.
-    fn binding(&self) -> String {
-        format!("{}\n{}\n{}\n{}{}", self.url, self.user, self.token, self.ca, if self.shared { "\nshared" } else { "" })
+    pub(super) fn binding(&self) -> String {
+        // With the shared authorities as they are now: when that list changes, the login is asked for again.
+        format!("{}\n{}\n{}\n{}{}", self.url, self.user, self.token, trusted(&self.ca, self.shared), if self.shared { "\nshared" } else { "" })
     }
     pub fn complete(&self) -> bool {
         check_url(&self.url).is_ok() && (self.token || !self.user.is_empty())
@@ -591,6 +605,8 @@ pub(super) struct Grafana {
     kept: Arc<std::sync::Mutex<HashMap<String, (String, Option<String>)>>>,
     /// The keychain was asked for these (context and what it's for), once per run.
     kept_asked: HashSet<String>,
+    /// Logins the keychain didn't take: (context, why), said and unticked at the next look.
+    not_kept: Arc<std::sync::Mutex<Vec<(String, String)>>>,
     /// The machine whose page is open: (context, instance).
     pub sel: Option<(String, String)>,
     window: Option<usize>,
@@ -623,6 +639,15 @@ impl KubedogApp {
         self.grafana.secrets.get(ctx).filter(|s| s.0 == conf.binding()).map(|s| s.1.clone())
     }
 
+    /// What's in memory of a cluster's Grafana login, after its settings were replaced.
+    pub(super) fn grafana_drop_login(&mut self, ctx: &str) {
+        self.grafana.secrets.remove(ctx);
+        self.grafana.typed.remove(ctx);
+        self.grafana.state.remove(ctx);
+        self.grafana.keep.remove(ctx);
+        self.grafana.to_keep.remove(ctx);
+    }
+
     fn grafana_forget(&mut self, ctx: &str) {
         // Out of the keychain too, when it was kept there.
         if self.prefs.grafana.get(ctx).map(|c| c.keep).unwrap_or(false) && self.screenshot.is_none() {
@@ -633,8 +658,7 @@ impl KubedogApp {
                 e.keep = false;
             }
             self.save();
-            let c = ctx.to_string();
-            std::thread::spawn(move || keychain(&c).and_then(|e| e.delete_credential().map_err(|e| e.to_string())));
+            unkeep(ctx);
         }
         self.grafana.keep.remove(ctx);
         self.grafana.to_keep.remove(ctx);
@@ -685,6 +709,17 @@ impl KubedogApp {
         }
         if self.demo {
             return;
+        }
+        // A login the keychain didn't take isn't kept: said once, and the tick goes.
+        for (c, why) in self.grafana.not_kept.lock().map(|mut l| std::mem::take(&mut *l)).unwrap_or_default() {
+            if let Some(conf) = self.prefs.grafana.get_mut(&c) {
+                conf.keep = false;
+            }
+            if let Some(e) = self.grafana.edit.get_mut(&c) {
+                e.keep = false;
+            }
+            self.save();
+            self.toast(format!("The Grafana login of {} isn't kept: {why}", ctx_label(&c)), true);
         }
         for c in self.active.clone() {
             self.grafana_from_keychain(&c);
@@ -826,8 +861,15 @@ impl KubedogApp {
                         // Grafana took the login: now it can go in the keychain, if that was asked for.
                         if self.grafana.to_keep.remove(ctx) {
                             if let Some((b, s)) = self.grafana.secrets.get(ctx) {
-                                let (c, text) = (ctx.to_string(), kept_text(b, &s.0));
-                                std::thread::spawn(move || keychain(&c).and_then(|e| e.set_password(&text).map_err(|e| e.to_string())));
+                                let (c, text, bad, egui) = (ctx.to_string(), kept_text(b, &s.0), self.grafana.not_kept.clone(), self.egui_ctx.clone());
+                                std::thread::spawn(move || {
+                                    if let Err(e) = keychain(&c).and_then(|e| e.set_password(&text).map_err(|e| format!("the keychain: {e}"))) {
+                                        if let Ok(mut l) = bad.lock() {
+                                            l.push((c, e));
+                                        }
+                                        egui.request_repaint();
+                                    }
+                                });
                             }
                         }
                         if let Some(c) = self.prefs.grafana.get_mut(ctx) {
@@ -845,6 +887,11 @@ impl KubedogApp {
         if let Some(e) = fail {
             if matches!(e, Fail::Login(_)) {
                 self.grafana.secrets.remove(ctx);
+                // A refused login is never sent again by itself: not kept for the next start either.
+                self.grafana.to_keep.remove(ctx);
+                if self.prefs.grafana.get(ctx).map(|c| c.keep).unwrap_or(false) && self.screenshot.is_none() {
+                    unkeep(ctx);
+                }
             }
             self.grafana.state.entry(ctx.to_string()).or_default().fail = Some(e);
         }
@@ -857,11 +904,11 @@ impl KubedogApp {
         self.grafana.secrets.insert(ctx.to_string(), (conf.binding(), Arc::new(Secret(typed))));
         // Kept in the keychain when ticked (once Grafana accepts it); taken out of it when unticked.
         let keep = self.grafana.keep.remove(ctx).unwrap_or(conf.keep);
+        self.grafana.to_keep.remove(ctx);
         if keep {
             self.grafana.to_keep.insert(ctx.to_string());
         } else if conf.keep {
-            let c = ctx.to_string();
-            std::thread::spawn(move || keychain(&c).and_then(|e| e.delete_credential().map_err(|e| e.to_string())));
+            unkeep(ctx);
         }
         if keep != conf.keep {
             if let Some(c) = self.prefs.grafana.get_mut(ctx) {
@@ -1328,11 +1375,12 @@ impl KubedogApp {
                     if set.is_some() && open {
                         if self.grafana.confirm_off.as_deref() == Some(ctx) {
                             if button(ui, "Really turn off", false, true) {
+                                // First, while it's still known whether the keychain holds its login.
+                                self.grafana_forget(ctx);
                                 self.prefs.grafana.remove(ctx);
                                 self.grafana.edit.remove(ctx);
                                 self.grafana.confirm_off = None;
                                 self.grafana.open = None;
-                                self.grafana_forget(ctx);
                                 self.save();
                             }
                         } else if button(ui, "Turn off", false, false) {
@@ -1414,6 +1462,9 @@ impl KubedogApp {
             if ok != saved {
                 if ok.binding() != saved.binding() {
                     self.grafana_forget(ctx);
+                    // The keychain's entry is gone with it.
+                    ok.keep = false;
+                    e.keep = false;
                 } else if let Some(g) = self.grafana.state.get_mut(ctx) {
                     *g = Graf { sources: g.sources.take(), ..Default::default() };
                 }
@@ -1512,8 +1563,11 @@ impl KubedogApp {
                 bytes = Some(Ok(text.clone().into_bytes()));
             }
         }
-        for f in ui.input(|i| i.raw.dropped_files.clone()) {
-            bytes = Some(read_small(f.path()));
+        // A dropped file goes to one form: the open server's, or the shared list when none is open.
+        if !(all && self.grafana.open.is_some()) {
+            for f in ui.input(|i| i.raw.dropped_files.clone()) {
+                bytes = Some(read_small(f.path()));
+            }
         }
         if let Some(b) = bytes {
             match b.and_then(|b| read_ca(&b)) {
@@ -1798,6 +1852,14 @@ mod tests {
         assert_eq!(trusted(a, false), a);
         assert_eq!(trusted("", false), "");
         assert_ne!(Conf { shared: true, ..c.clone() }.binding(), c.binding());
+        // The login of a server that uses the shared list is for that list: another list, another login.
+        let (plain, uses) = (c.binding(), Conf { shared: true, ..c.clone() });
+        set_shared(a);
+        let with_a = uses.binding();
+        set_shared(&joined(a, b));
+        assert_ne!(uses.binding(), with_a);
+        assert_eq!(c.binding(), plain);
+        set_shared("");
         assert!(Conf::from_json(&Conf { shared: true, ..c.clone() }.json()).shared && !Conf::from_json(&c.json()).shared);
     }
 

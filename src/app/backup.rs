@@ -49,6 +49,11 @@ pub(super) fn import_into(now: &Prefs, file: &Value, exists: &dyn Fn(&str) -> bo
     if !now.update_check {
         j["update_check"] = false.into();
     }
+    // Whether a Grafana login is in the keychain is a fact of this computer: as it is here, for the same server and login.
+    let local: Vec<(String, bool)> = j["grafana"].as_object().into_iter().flatten().map(|(c, v)| (c.clone(), now.grafana.get(c).is_some_and(|here| here.keep && here.binding() == grafana::Conf::from_json(v).binding()))).collect();
+    for (c, keep) in local {
+        j["grafana"][c.as_str()]["keep"] = keep.into();
+    }
     // A file can make this computer air-gapped, never the other way round.
     if now.airgapped {
         j["airgapped"] = true.into();
@@ -167,7 +172,25 @@ impl KubedogApp {
         p.update_check &= now.update_check;
         (p.update_tried, p.update_fails, p.update_last) = (now.update_tried, now.update_fails, now.update_last);
         (p.update_latest, p.update_skip) = (now.update_latest.clone(), now.update_skip.clone());
+        // A Grafana login kept here stays kept for the same server and login; one whose server went or changed
+        // leaves the keychain.
+        let mut gone = vec![];
+        for (c, here) in now.grafana.iter().filter(|x| x.1.keep) {
+            match p.grafana.get_mut(c).filter(|n| n.binding() == here.binding()) {
+                Some(n) => n.keep = true,
+                None => gone.push(c.clone()),
+            }
+        }
+        for (c, n) in p.grafana.iter_mut() {
+            n.keep &= now.grafana.get(c).is_some_and(|here| here.keep);
+        }
         self.prefs = *p;
+        for c in gone {
+            if self.screenshot.is_none() {
+                grafana::unkeep(&c);
+            }
+            self.grafana_drop_login(&c);
+        }
         crate::theme::install_font(&self.egui_ctx, &self.prefs.font);
         self.apply_theme();
         self.save();
@@ -241,6 +264,11 @@ mod tests {
         let out = export_json(&graf);
         assert_eq!(out["settings"]["grafana"]["shop"]["keep"], false);
         assert!(!import_into(&Prefs::default(), &out, &|_| false).unwrap().0.grafana["shop"].keep);
+        // Read in where that login is kept: it stays kept; with another address it doesn't.
+        assert!(import_into(&graf, &out, &|_| false).unwrap().0.grafana["shop"].keep);
+        let mut moved = out.clone();
+        moved["settings"]["grafana"]["shop"]["url"] = "https://other.example".into();
+        assert!(!import_into(&graf, &moved, &|_| false).unwrap().0.grafana["shop"].keep);
         // Switched on by Kubedog itself, it stays with the computer it happened on.
         let mut auto = Prefs::default();
         (auto.airgapped, auto.airgapped_auto) = (true, true);

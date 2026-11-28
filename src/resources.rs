@@ -146,11 +146,12 @@ fn age_cell(ts: &Value) -> Cell {
 /// A pod's age: bright green while it's written in seconds, green in minutes, plain once it's written in hours.
 fn pod_age_cell(ts: &Value) -> Cell {
     let mut c = age_cell(ts);
-    c.tone = young(ts.as_str().and_then(crate::kube::parse_time).map(|t| crate::kube::now_secs() - t));
+    // A cluster whose clock is ahead gives an age below zero, which is written as 0s.
+    c.tone = young(ts.as_str().and_then(crate::kube::parse_time).map(|t| (crate::kube::now_secs() - t).max(0)));
     c
 }
 
-/// The tone for an age in seconds; not known (or a clock that's off) is plain.
+/// The tone for an age in seconds; not known is plain.
 pub fn young(secs: Option<i64>) -> Tone {
     match secs {
         // As the age is written: in seconds up to two minutes, in minutes up to three hours.
