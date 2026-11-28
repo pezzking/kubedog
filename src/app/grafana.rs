@@ -24,6 +24,39 @@ pub(super) struct Conf {
     pub label: String,
     /// The password or token is in this computer's keychain (never in the settings file).
     pub keep: bool,
+    /// Kubedog's shared certificate authorities are trusted for this server too.
+    pub shared: bool,
+}
+
+/// The shared certificate authorities, as the settings have them now: read where a connection is made.
+static SHARED: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+pub(super) fn set_shared(pem: &str) {
+    if let Ok(mut s) = SHARED.write() {
+        if *s != pem {
+            *s = pem.to_string();
+        }
+    }
+}
+
+/// The authorities a server's certificate is checked against: its own, and the shared ones when it says so.
+/// Empty: this computer's own list.
+pub(super) fn trusted(own: &str, shared: bool) -> String {
+    let all = if shared { SHARED.read().map(|s| s.clone()).unwrap_or_default() } else { String::new() };
+    joined(own, &all)
+}
+
+/// Two lists of certificates as one, without the same one twice.
+pub(super) fn joined(a: &str, b: &str) -> String {
+    let mut out: Vec<String> = vec![];
+    for block in a.split("-----END CERTIFICATE-----").chain(b.split("-----END CERTIFICATE-----")) {
+        let Some(i) = block.find("-----BEGIN CERTIFICATE-----") else { continue };
+        let one = format!("{}-----END CERTIFICATE-----", block[i..].trim_end().to_string() + "\n");
+        if !out.contains(&one) {
+            out.push(one);
+        }
+    }
+    if out.is_empty() { String::new() } else { out.join("\n") + "\n" }
 }
 
 /// The keychain's entry for a cluster's Grafana: named by the cluster, never by the address or the user.
@@ -45,15 +78,15 @@ pub(super) fn kept_secret(text: &str, binding: &str) -> Option<String> {
 
 impl Conf {
     pub fn json(&self) -> Value {
-        serde_json::json!({"url": self.url, "user": self.user, "token": self.token, "ca": self.ca, "uid": self.uid, "label": self.label, "keep": self.keep})
+        serde_json::json!({"url": self.url, "user": self.user, "token": self.token, "ca": self.ca, "uid": self.uid, "label": self.label, "keep": self.keep, "shared": self.shared})
     }
     pub fn from_json(v: &Value) -> Conf {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Conf { url: s("url"), user: s("user"), token: v["token"].as_bool().unwrap_or(false), ca: s("ca"), uid: s("uid"), label: s("label"), keep: v["keep"].as_bool().unwrap_or(false) }
+        Conf { url: s("url"), user: s("user"), token: v["token"].as_bool().unwrap_or(false), ca: s("ca"), uid: s("uid"), label: s("label"), keep: v["keep"].as_bool().unwrap_or(false), shared: v["shared"].as_bool().unwrap_or(false) }
     }
     /// What a typed password is for: it's forgotten when any of this changes.
     fn binding(&self) -> String {
-        format!("{}\n{}\n{}\n{}", self.url, self.user, self.token, self.ca)
+        format!("{}\n{}\n{}\n{}{}", self.url, self.user, self.token, self.ca, if self.shared { "\nshared" } else { "" })
     }
     pub fn complete(&self) -> bool {
         check_url(&self.url).is_ok() && (self.token || !self.user.is_empty())
@@ -214,10 +247,11 @@ pub(super) fn explain(e: &ureq::Error, own_ca: bool) -> Fail {
 impl Client {
     pub fn new(conf: &Conf, secret: &Secret) -> Result<Client, Fail> {
         let url = check_url(&conf.url).map_err(Fail::Stop)?;
-        let roots = if conf.ca.is_empty() {
+        let ca = trusted(&conf.ca, conf.shared);
+        let roots = if ca.is_empty() {
             ureq::tls::RootCerts::PlatformVerifier
         } else {
-            let ders = pem_ders(&conf.ca).into_iter().collect::<Option<Vec<_>>>().filter(|d| !d.is_empty()).ok_or_else(|| Fail::Stop("The saved certificate can't be read.".into()))?;
+            let ders = pem_ders(&ca).into_iter().collect::<Option<Vec<_>>>().filter(|d| !d.is_empty()).ok_or_else(|| Fail::Stop("The saved certificate can't be read.".into()))?;
             let list: Vec<_> = ders.iter().map(|d| ureq::tls::Certificate::from_der(d).to_owned()).collect();
             ureq::tls::RootCerts::new_with_certs(&list)
         };
@@ -236,7 +270,7 @@ impl Client {
             .tls_config(ureq::tls::TlsConfig::builder().root_certs(roots).build())
             .build()
             .new_agent();
-        Ok(Client { agent, conf: Conf { url, ..conf.clone() }, auth })
+        Ok(Client { agent, conf: Conf { url, ca, ..conf.clone() }, auth })
     }
 
     fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value, Fail> {
@@ -526,6 +560,9 @@ pub(super) enum Answer {
     Hist(usize, Result<Hist, Fail>),
     Sources(Result<Vec<(String, String)>, Fail>),
 }
+
+/// The key of the shared list in the certificate form's state.
+const SHARED_KEY: &str = "shared authorities";
 
 // ---------- state ----------
 
@@ -1218,6 +1255,20 @@ impl KubedogApp {
     pub(super) fn settings_monitoring(&mut self, ui: &mut Ui) {
         settings::title(ui, "Special monitoring", "Optional. Other systems that know more about your clusters than your own account may see. For now that's Grafana.");
         card(ui, |ui| {
+            pg::panel(ui, "Shared certificate authorities", "kept once, for every server that says it uses them");
+            let mut e = Conf { ca: self.prefs.authorities.clone(), ..Default::default() };
+            if self.grafana_ca(ui, SHARED_KEY, &mut e) {
+                self.prefs.authorities = e.ca;
+                self.save();
+                // Logins were typed for what was trusted then: asked again where the shared ones are used.
+                for c in self.prefs.grafana.iter().filter(|x| x.1.shared).map(|x| x.0.clone()).collect::<Vec<_>>() {
+                    self.grafana.secrets.remove(&c);
+                    self.grafana.state.remove(&c);
+                }
+            }
+        });
+        ui.add_space(10.0);
+        card(ui, |ui| {
             pg::panel(ui, "Grafana", "for nodes your account may not read, and for their history");
             let para = |ui: &mut Ui, t: &str| {
                 ui.add(egui::Label::new(RichText::new(t).size(z(13.0)).color(TEXT_MUTED())).wrap());
@@ -1236,7 +1287,7 @@ impl KubedogApp {
             para(ui, "1.  In Grafana: Administration > Users and access > Service accounts > Add service account, role Viewer. Then Add service account token, and copy it.");
             para(ui, "2.  Below, at your cluster: Use a Grafana. Enter its address, such as https://grafana.example.com, and choose Service account token.");
             para(ui, "3.  If your company signs its own certificates, add its certificate authority.");
-            para(ui, "4.  Paste the token and log in. It's kept in memory only, so it's asked for again the next time you start Kubedog.");
+            para(ui, "4.  Paste the token and log in. It's kept in memory only and asked for again at the next start, unless you tick that the system's keychain keeps it.");
             para(ui, "5.  Choose the data source. If it watches several clusters, narrow it with a label, such as cluster=\"prod\".");
             para(ui, "6.  Open the nodes. Kubedog only reads from Grafana.");
         });
@@ -1408,13 +1459,26 @@ impl KubedogApp {
     /// The certificate authority part of the form. Returns whether it changed.
     pub(super) fn grafana_ca(&mut self, ui: &mut Ui, ctx: &str, e: &mut Conf) -> bool {
         let mut changed = false;
-        ui.label(RichText::new("Certificate authority").size(z(13.5)).color(TEXT_DEFAULT()));
-        ui.add(egui::Label::new(RichText::new("Needed when the certificate is signed by your own authority. It's only used for this server. A .pem, .crt or .cer file, chains too; never a private key.").size(z(11.5)).color(TEXT_PLACEHOLDER())).wrap());
+        // The list kept for all of Kubedog, or one server's own.
+        let all = ctx == SHARED_KEY;
+        if all {
+            ui.add(egui::Label::new(RichText::new("When several servers (the Grafana of each cluster, Proxmox) are signed by the same authority of your own, add it here once. A server uses it when \"Also trust the shared certificate authorities\" is ticked in its settings; nothing else in Kubedog does. A .pem, .crt or .cer file, chains too; never a private key.").size(z(12.0)).color(TEXT_MUTED())).wrap());
+        } else {
+            ui.label(RichText::new("Certificate authority").size(z(13.5)).color(TEXT_DEFAULT()));
+            ui.add(egui::Label::new(RichText::new("Needed when the certificate is signed by your own authority. It's only used for this server. A .pem, .crt or .cer file, chains too; never a private key.").size(z(11.5)).color(TEXT_PLACEHOLDER())).wrap());
+            let n = self.prefs.authorities.matches("-----BEGIN CERTIFICATE-----").count();
+            if n > 0 {
+                changed |= ui.checkbox(&mut e.shared, RichText::new(format!("Also trust the shared certificate authorities ({n}, kept in Settings > Special monitoring)")).size(z(13.0))).changed();
+            } else if e.shared {
+                e.shared = false;
+                changed = true;
+            }
+        }
         ui.add_space(4.0);
         if !e.ca.is_empty() {
             let list = read_ca(e.ca.as_bytes()).map(|d| d.certs).unwrap_or_default();
             show_certs(ui, &list);
-            if button(ui, "Remove (use this computer's own list)", false, false) {
+            if button(ui, if all { "Remove all of these" } else { "Remove (use this computer's own list)" }, false, false) {
                 e.ca.clear();
                 changed = true;
             }
@@ -1473,7 +1537,7 @@ impl KubedogApp {
             ui.add_space(6.0);
             Frame::new().stroke(Stroke::new(1.0, WARNING())).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new("Trust this for this Grafana?").strong().color(TEXT_DEFAULT()));
+                ui.label(RichText::new(if all { "Keep this as a shared certificate authority?" } else { "Trust this for this server?" }).strong().color(TEXT_DEFAULT()));
                 ui.add(egui::Label::new(RichText::new("Compare the fingerprint with what your company publishes.").size(z(12.0)).color(TEXT_SUBTLE())).wrap());
                 show_certs(ui, &d.certs);
                 let now = kube::now_secs();
@@ -1483,10 +1547,18 @@ impl KubedogApp {
                     ui.label(RichText::new("None of these is a certificate authority, so it may not work.").color(WARNING()));
                 }
                 ui.horizontal(|ui| {
-                    if button(ui, "Trust", true, false) {
-                        e.ca = d.pem.clone();
+                    if button(ui, if all { "Keep" } else { "Trust for this server" }, true, false) {
+                        // The shared list grows; a server's own is replaced.
+                        e.ca = if all { joined(&e.ca, &d.pem) } else { d.pem.clone() };
                         changed = true;
                         self.grafana.draft.remove(ctx);
+                    }
+                    if !all && button(ui, "Trust for all of Kubedog (shared)", false, false) {
+                        self.prefs.authorities = joined(&self.prefs.authorities, &d.pem);
+                        e.shared = true;
+                        changed = true;
+                        self.grafana.draft.remove(ctx);
+                        self.save();
                     }
                     if button(ui, "Cancel", false, false) {
                         self.grafana.draft.remove(ctx);
@@ -1711,6 +1783,25 @@ mod tests {
     }
 
     #[test]
+    fn shared_authorities() {
+        let (a, b) = ("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n", "junk\n-----BEGIN CERTIFICATE-----\nBBBB\n-----END CERTIFICATE-----");
+        assert_eq!(joined("", ""), "");
+        assert_eq!(joined(a, ""), a);
+        // Once each, in order; what isn't a certificate is dropped.
+        assert_eq!(joined(a, a), a);
+        let both = joined(a, b);
+        assert_eq!(both.matches("BEGIN CERTIFICATE").count(), 2);
+        assert!(both.find("AAAA") < both.find("BBBB") && !both.contains("junk"));
+        assert_eq!(joined(&both, b), both);
+        // A server only gets the shared ones when its settings say so, and then it's another login.
+        let c = Conf { url: "https://g.example".into(), user: "me".into(), ..Default::default() };
+        assert_eq!(trusted(a, false), a);
+        assert_eq!(trusted("", false), "");
+        assert_ne!(Conf { shared: true, ..c.clone() }.binding(), c.binding());
+        assert!(Conf::from_json(&Conf { shared: true, ..c.clone() }.json()).shared && !Conf::from_json(&c.json()).shared);
+    }
+
+    #[test]
     fn kept_for_one_address_and_login() {
         let c = Conf { url: "https://g.example".into(), user: "me".into(), ..Default::default() };
         let t = kept_text(&c.binding(), "made-up");
@@ -1730,7 +1821,7 @@ mod tests {
     fn nothing_secret_is_kept() {
         let c = Conf { url: "https://h".into(), user: "me".into(), ..Default::default() };
         let keys: Vec<String> = c.json().as_object().unwrap().keys().cloned().collect();
-        assert_eq!(keys.len(), 7); // "keep" only says that the keychain has it
+        assert_eq!(keys.len(), 8); // "keep" only says that the keychain has it
         assert!(!keys.iter().any(|k| k.contains("pass") || k.contains("secret")));
         assert_eq!(Conf::from_json(&c.json()), c);
         // Another address, user or certificate: another login.

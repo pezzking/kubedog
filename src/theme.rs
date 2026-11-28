@@ -20,6 +20,8 @@ pub struct Palette {
     pub text_subtle: Color32,
     pub text_placeholder: Color32,
     pub success: Color32,
+    /// A brighter green, for what has only just begun.
+    pub fresh: Color32,
     pub warning: Color32,
     pub danger: Color32,
     pub info: Color32,
@@ -53,6 +55,7 @@ pub static DARK: Palette = Palette {
     text_subtle: c(0x8a8f98),
     text_placeholder: c(0x697281),
     success: c(0x4cb782),
+    fresh: c(0x5cf29a),
     warning: c(0xe9b306),
     danger: c(0xeb5757), // estimated
     info: c(0xa78bfa),   // violet, estimated
@@ -79,6 +82,7 @@ pub static LIGHT: Palette = Palette {
     text_subtle: c(0x6b707a),
     text_placeholder: c(0x969ba5),
     success: c(0x1d9460),
+    fresh: c(0x0fb35a),
     warning: c(0xb07d00),
     danger: c(0xd23c3c),
     info: c(0x7651d6),
@@ -105,6 +109,7 @@ pub static SAND: Palette = Palette {
     text_subtle: c(0x786a52),
     text_placeholder: c(0x9f9077),
     success: c(0x3b8a55),
+    fresh: c(0x1fa850),
     warning: c(0xa47206),
     danger: c(0xbf3a2c),
     info: c(0x7a5cbd),
@@ -237,7 +242,7 @@ colours! {
     BG_CARD => bg_card, BG_SELECTED => bg_selected, BG_HOVER => bg_hover,
     BORDER_SUBTLE => border_subtle, BORDER_DEFAULT => border_default,
     TEXT_DEFAULT => text_default, TEXT_MUTED => text_muted, TEXT_SUBTLE => text_subtle, TEXT_PLACEHOLDER => text_placeholder,
-    SUCCESS => success, WARNING => warning, DANGER => danger, INFO => info,
+    SUCCESS => success, FRESH => fresh, WARNING => warning, DANGER => danger, INFO => info,
     CPU_BAR => cpu_bar, MEM_BAR => success, DANGER_BG => danger_bg,
     LOG_BG => log_bg, WARN_BG => warn_bg, ERROR_BG => error_bg,
 }
@@ -264,6 +269,7 @@ pub fn tone_color(t: crate::resources::Tone) -> Color32 {
         Normal => TEXT_DEFAULT(),
         Muted => TEXT_MUTED(),
         Success => SUCCESS(),
+        Fresh => FRESH(),
         Warning => WARNING(),
         Danger => DANGER(),
         Info => INFO(),

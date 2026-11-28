@@ -92,6 +92,8 @@ pub enum Tone {
     Normal,
     Muted,
     Success,
+    /// Only just begun: a brighter green.
+    Fresh,
     Warning,
     Danger,
     Info,
@@ -141,6 +143,23 @@ fn age_cell(ts: &Value) -> Cell {
         tone: Tone::Normal,
     }
 }
+/// A pod's age: bright green while it's written in seconds, green in minutes, plain once it's written in hours.
+fn pod_age_cell(ts: &Value) -> Cell {
+    let mut c = age_cell(ts);
+    c.tone = young(ts.as_str().and_then(crate::kube::parse_time).map(|t| crate::kube::now_secs() - t));
+    c
+}
+
+/// The tone for an age in seconds; not known (or a clock that's off) is plain.
+pub fn young(secs: Option<i64>) -> Tone {
+    match secs {
+        // As the age is written: in seconds up to two minutes, in minutes up to three hours.
+        Some(0..=119) => Tone::Fresh,
+        Some(120..=10_799) => Tone::Success,
+        _ => Tone::Normal,
+    }
+}
+
 fn s(v: &Value) -> String {
     match v {
         Value::String(x) => x.clone(),
@@ -538,7 +557,7 @@ impl Kind {
                     toned(t(s(&spec["nodeName"])), Tone::Muted),
                     toned(t(owner), Tone::Muted),
                     toned(t(s(&st["podIP"])), Tone::Muted),
-                    age_cell(created),
+                    pod_age_cell(created),
                 ]
             }
             Deployments | StatefulSets => {
@@ -1251,5 +1270,18 @@ mod tests {
         assert_eq!(ready(Kind::ReplicaSets, &dep(2, 1), 2).1, Tone::Danger);
         let ds = serde_json::json!({"metadata": {}, "spec": {}, "status": {"numberReady": 4, "desiredNumberScheduled": 4}});
         assert_eq!(ready(Kind::DaemonSets, &ds, 1).1, Tone::Success);
+    }
+
+    #[test]
+    fn a_young_pod_is_green() {
+        use crate::kube::human_duration as h;
+        for (secs, tone) in [(0, Tone::Fresh), (45, Tone::Fresh), (119, Tone::Fresh), (120, Tone::Success), (3600, Tone::Success), (10_799, Tone::Success), (10_800, Tone::Normal), (900_000, Tone::Normal)] {
+            assert_eq!(young(Some(secs)), tone, "{secs}");
+            // The colour follows what is written: seconds, then minutes, then hours.
+            let (text, want) = (h(secs), match tone { Tone::Fresh => "s", Tone::Success => "m", _ => "" });
+            assert!(tone == Tone::Normal && text.contains(['h', 'd', 'y']) || tone == Tone::Fresh && text.ends_with('s') && !text.contains('m') || tone == Tone::Success && text.contains('m') && !text.contains('h'), "{secs} {text} {want}");
+        }
+        assert_eq!(young(None), Tone::Normal);
+        assert_eq!(young(Some(-5)), Tone::Normal);
     }
 }

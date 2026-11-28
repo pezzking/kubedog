@@ -14,6 +14,7 @@ The short version is in the [README](../README.md). This is the whole list.
 - **Lists of every common kind:** workloads, networking, configuration, storage, access control,
   CRDs.
   - CPU and memory bars, a filter box and sorting.
+  - A pod's age is bright green while it's written in seconds and green while in minutes; from hours on it's plain.
   - Columns you can show, hide and reorder: the sliders icon at the top right opens a list where you
     drag rows to order them and tick them to show them (or drag the table's headers). Extra columns
     are available, such as CPU and memory requests and limits, images and labels.
@@ -174,6 +175,11 @@ The short version is in the [README](../README.md). This is the whole list.
   certificate authority (file, paste or drop). Reads only; certificates are always checked. The password is asked
   for once per run and kept in memory only, or, with a tick, kept in the system's keychain once Grafana accepts it,
   so it isn't asked again. It is never in the settings, and a settings file doesn't carry it or say that it's kept.
+- **Shared certificate authorities** (Settings > Special monitoring): an authority of your own that signs several
+  servers is added once and kept for all of Kubedog. Each Grafana and each Proxmox uses it when "Also trust the
+  shared certificate authorities" is ticked in its settings; nothing else does. When adding a certificate for one
+  server, "Trust for all of Kubedog (shared)" puts it there straight away. They travel in a settings file (they are
+  certificates, not secrets). A login is asked for again when what its server trusts changes.
 - **Postgres (CloudNativePG):**
   - A page per cluster: a live replication map, health checks, write activity and lag, instances,
     backups and the window that can be restored, addresses, databases, roles, certificates.

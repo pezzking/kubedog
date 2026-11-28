@@ -690,6 +690,7 @@ impl KubedogApp {
         };
         if app.screenshot.is_none() {
             app.prefs = load_prefs();
+            grafana::set_shared(&app.prefs.authorities);
         } else if let Ok(j) = std::env::var("KUBEDOG_SHOT_PREFS") {
             // Test aid: sample settings for a screenshot, kept in memory only (nothing is saved).
             if let Ok(v) = serde_json::from_str::<Value>(&j) {
@@ -2625,6 +2626,8 @@ pub(crate) struct Prefs {
     logins: Vec<String>,
     /// A Grafana per cluster, for node figures (never its password).
     grafana: HashMap<String, grafana::Conf>,
+    /// Certificate authorities (PEM) kept once for all of Kubedog; a server uses them when its settings say so.
+    authorities: String,
     proxmox: Vec<proxmox::Conf>,
     netlab: nethelp::Prefs,
     /// The font ("ubuntu", "inter"...) and the text size (16 is normal).
@@ -2706,6 +2709,7 @@ impl Default for Prefs {
             accent: "orange".into(),
             logins: vec![],
             grafana: HashMap::new(),
+            authorities: String::new(),
             proxmox: vec![],
             netlab: nethelp::Prefs::default(),
             font: "ubuntu".into(),
@@ -2824,6 +2828,7 @@ fn prefs_from_json(v: &Value) -> Prefs {
         netlab: nethelp::Prefs::from_json(&v["netlab"]),
         proxmox: v["proxmox"].as_array().map(|l| l.iter().map(proxmox::Conf::from_json).collect()).unwrap_or_default(),
         grafana: v["grafana"].as_object().map(|m| m.iter().map(|(k, c)| (k.clone(), grafana::Conf::from_json(c))).collect()).unwrap_or_default(),
+        authorities: v["authorities"].as_str().unwrap_or("").to_string(),
         font: v["font"].as_str().filter(|f| crate::theme::FONTS.iter().any(|x| x.0 == *f)).unwrap_or("ubuntu").to_string(),
         text_size: v["text_size"].as_u64().map(|n| n as u8).filter(|n| crate::theme::TEXT_SIZES.contains(n)).unwrap_or(crate::theme::NORMAL_TEXT),
         accent: crate::theme::read_look(v["theme"].as_str(), v["accent"].as_str()).1,
@@ -2915,6 +2920,7 @@ fn prefs_to_json(p: &Prefs) -> Value {
         "accent": p.accent,
         "logins": p.logins,
         "grafana": p.grafana.iter().map(|(k, c)| (k.clone(), c.json())).collect::<serde_json::Map<String, Value>>(),
+        "authorities": p.authorities,
         "font": p.font,
         "text_size": p.text_size,
         "groups": p.groups.iter().map(|g| serde_json::json!({"name": g.name, "contexts": g.contexts})).collect::<Vec<_>>(),
@@ -3497,6 +3503,7 @@ impl KubedogApp {
     /// Save settings (never in screenshot mode).
     fn save(&self) {
         set_ctx_look(&self.prefs);
+        grafana::set_shared(&self.prefs.authorities);
         if self.screenshot.is_none() {
             save_prefs(&self.prefs);
         }

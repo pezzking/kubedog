@@ -28,15 +28,17 @@ pub(super) struct Conf {
     pub ca: String,
     /// The token's secret is in the system's keychain.
     pub keep: bool,
+    /// Kubedog's shared certificate authorities are trusted for this server too.
+    pub shared: bool,
 }
 
 impl Conf {
     pub fn json(&self) -> Value {
-        serde_json::json!({"name": self.name, "url": self.url, "token": self.token, "ca": self.ca, "keep": self.keep})
+        serde_json::json!({"name": self.name, "url": self.url, "token": self.token, "ca": self.ca, "keep": self.keep, "shared": self.shared})
     }
     pub fn from_json(v: &Value) -> Conf {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Conf { name: s("name"), url: s("url"), token: s("token"), ca: s("ca"), keep: v["keep"].as_bool().unwrap_or(false) }
+        Conf { name: s("name"), url: s("url"), token: s("token"), ca: s("ca"), keep: v["keep"].as_bool().unwrap_or(false), shared: v["shared"].as_bool().unwrap_or(false) }
     }
     pub fn label(&self) -> String {
         if !self.name.is_empty() {
@@ -49,7 +51,7 @@ impl Conf {
     }
     /// What a secret was typed for: it's forgotten when any of this changes, and never sent elsewhere.
     fn binding(&self) -> String {
-        let d = ring::digest::digest(&ring::digest::SHA256, format!("{}\n{}\n{}", self.url, self.token, self.ca).as_bytes());
+        let d = ring::digest::digest(&ring::digest::SHA256, format!("{}\n{}\n{}{}", self.url, self.token, self.ca, if self.shared { "\nshared" } else { "" }).as_bytes());
         d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 }
@@ -88,10 +90,11 @@ impl Client {
         let url = check_url(&c.url)?;
         check_token(&c.token)?;
         check_secret(secret)?;
-        let roots = if c.ca.is_empty() {
+        let ca = super::grafana::trusted(&c.ca, c.shared);
+        let roots = if ca.is_empty() {
             ureq::tls::RootCerts::PlatformVerifier
         } else {
-            let ders = pem_ders(&c.ca).into_iter().collect::<Option<Vec<_>>>().filter(|d| !d.is_empty()).ok_or("The saved certificate can't be read.")?;
+            let ders = pem_ders(&ca).into_iter().collect::<Option<Vec<_>>>().filter(|d| !d.is_empty()).ok_or("The saved certificate can't be read.")?;
             let list: Vec<_> = ders.iter().map(|d| ureq::tls::Certificate::from_der(d).to_owned()).collect();
             ureq::tls::RootCerts::new_with_certs(&list)
         };
@@ -106,7 +109,7 @@ impl Client {
             .tls_config(ureq::tls::TlsConfig::builder().root_certs(roots).build())
             .build()
             .new_agent();
-        Ok(Client { agent, url, auth: format!("PVEAPIToken={}={secret}", c.token), ca: !c.ca.is_empty() })
+        Ok(Client { agent, url, auth: format!("PVEAPIToken={}={secret}", c.token), ca: !ca.is_empty() })
     }
 
     fn get(&self, path: &str) -> Result<Value, String> {
@@ -1086,8 +1089,10 @@ impl KubedogApp {
                 ui.add_space(6.0);
                 let mut ca = self.proxmox.ca.remove(&i).unwrap_or_default();
                 ca.ca = e.ca.clone();
+                ca.shared = e.shared;
                 done |= self.grafana_ca(ui, &format!("proxmox|{i}"), &mut ca);
                 e.ca = ca.ca.clone();
+                e.shared = ca.shared;
                 self.proxmox.ca.insert(i, ca);
                 said(ui, "Add this first. Proxmox usually signs its own certificate: its authority is the file /etc/pve/pve-root-ca.pem on a host. The address has to be a name or number that's in the host's certificate.", TEXT_PLACEHOLDER());
                 ui.add_space(6.0);
