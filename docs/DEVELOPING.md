@@ -140,6 +140,8 @@ reads from clusters and never saves settings. Environment variables choose what 
   container only run with `KUBEDOG_SHOT_EXEC=1` (`KUBEDOG_SHOT_FILES=container`, `_PATH`, `_FILE`, `_DF=container`)
 - `KUBEDOG_SHOT_RELOGIN=oc` (or `none`: no oc on the computer) shows the card of a login that has ended, with a made-up OpenShift address; oc is never started in a screenshot
 - `KUBEDOG_SHOT_UPDATE=9.9.9` makes up a newer version for the top bar and Settings > About; GitHub is never asked in a screenshot
+- `KUBEDOG_SHOT_BREW=1|running|done|failed` (with `KUBEDOG_SHOT_UPDATE`) shows the Homebrew update in Settings > About; Homebrew is never started in a screenshot
+- `KUBEDOG_SHOT_START=settings` shows Settings as opened from the start page
 - `KUBEDOG_SHOT_AIRGAPPED=on|auto|forced` shows Settings > About as air-gapped: by hand, by itself, or by the installation
 - `KUBEDOG_SHOT_ZOOM=0.6` (see more of a long page), `KUBEDOG_SHOT_SCROLL=600`, `KUBEDOG_SHOT_THRESHOLD=50`
 

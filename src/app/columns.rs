@@ -26,6 +26,10 @@ pub(super) fn is_fixed(name: &str) -> bool {
 /// Every column of a kind in its standard order: the fixed ones, the usual ones with the request
 /// and limit columns beside the usage they belong to, the extra ones, and Age at the end.
 pub(super) fn default_order(kind: Kind) -> Vec<&'static str> {
+    // Pods have an order of their own: how long it runs and how often it restarted sit next to its state.
+    if kind == Kind::Pods {
+        return PODS.to_vec();
+    }
     let mut v: Vec<&'static str> = vec!["Context"];
     if kind.namespaced() {
         v.push("Namespace");
@@ -49,6 +53,17 @@ pub(super) fn default_order(kind: Kind) -> Vec<&'static str> {
         v.push("Age");
     }
     v
+}
+
+/// The list of pods, every column in its standard order.
+const PODS: [&str; 26] = [
+    "Context", "Namespace", "Name", "Ready", "Status", "Age", "Restarts", "CPU Usage", "Memory Usage", "CPU Requests", "CPU Limits", "Memory Requests", "Memory Limits", "Last Restart",
+    "Last Restart Reason", "Node", "Controller", "Pod IP", "Containers", "Images", "QoS Class", "Service Account", "Host IP", "Priority Class", "Labels", "Created",
+];
+
+/// The columns shown until someone chooses their own (besides the fixed ones).
+pub(super) fn default_shown(kind: Kind) -> Vec<&'static str> {
+    kind.columns().iter().copied().filter(|c| !(kind == Kind::Pods && *c == "Pod IP")).collect()
 }
 
 /// The saved order with unknown names dropped and missing ones put where they'd normally be.
@@ -106,7 +121,7 @@ impl KubedogApp {
         }
         match self.prefs.columns.get(&format!("{kind:?}")) {
             Some(s) if s.iter().any(|c| kind.all_columns().contains(&c.as_str())) => s.iter().any(|c| c == name),
-            _ => kind.columns().contains(&name),
+            _ => default_shown(kind).contains(&name),
         }
     }
 
@@ -174,7 +189,7 @@ impl KubedogApp {
         } else {
             self.prefs.column_order.insert(key.clone(), names(&order));
         }
-        let usual = kind.columns();
+        let usual = default_shown(kind);
         if shown.len() == usual.len() && shown.iter().all(|c| usual.contains(c)) {
             self.prefs.columns.remove(&key);
         } else {
@@ -386,8 +401,12 @@ mod tests {
     #[test]
     fn orders() {
         let d = default_order(Kind::Pods);
-        assert_eq!(&d[..4], &["Context", "Namespace", "Name", "Ready"]);
-        assert_eq!(d.last(), Some(&"Age"));
+        assert_eq!(&d[..7], &["Context", "Namespace", "Name", "Ready", "Status", "Age", "Restarts"]);
+        // What a list of pods shows until someone chooses: no Pod IP, the rest as they come.
+        let shown: Vec<&str> = d.iter().copied().filter(|c| default_shown(Kind::Pods).contains(c)).collect();
+        assert_eq!(shown, ["Ready", "Status", "Age", "Restarts", "CPU Usage", "Memory Usage", "Last Restart", "Last Restart Reason", "Node", "Controller"]);
+        assert_eq!(default_order(Kind::Deployments).last(), Some(&"Age"));
+        assert_eq!(default_shown(Kind::Deployments), Kind::Deployments.columns());
         let mem = d.iter().position(|c| *c == "Memory Usage").unwrap();
         assert_eq!(&d[mem + 1..mem + 5], &["CPU Requests", "CPU Limits", "Memory Requests", "Memory Limits"]);
         // Every column once, for every kind.

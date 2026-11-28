@@ -22,6 +22,24 @@ pub(super) const SECTIONS: [(&str, &str); 11] = [
 impl KubedogApp {
     pub(super) fn settings_view(&mut self, ui: &mut Ui) {
         self.header(ui, false, None, false);
+        self.settings_body(ui);
+    }
+
+    /// Settings from the start page, before any cluster is open: a way back instead of the top bar.
+    pub(super) fn settings_at_start(&mut self, ui: &mut Ui) {
+        ui.add_space(u(30.0));
+        ui.horizontal(|ui| {
+            ui.add_space(10.0);
+            if button(ui, "‹  Back to the clusters", false, false) || (ui.input(|i| i.key_pressed(Key::Escape)) && self.dialog.is_none() && !ui.ctx().memory(|m| m.focused().is_some())) {
+                self.start_settings = false;
+            }
+        });
+        ui.add_space(6.0);
+        ui.separator();
+        self.settings_body(ui);
+    }
+
+    fn settings_body(&mut self, ui: &mut Ui) {
         if self.screenshot.is_some() {
             if let Ok(want) = std::env::var("KUBEDOG_SHOT_SETTINGS") {
                 if let Some(s) = SECTIONS.iter().find(|s| s.0.eq_ignore_ascii_case(&want) || s.0.to_lowercase().starts_with(&want.to_lowercase())) {

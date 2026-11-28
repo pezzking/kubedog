@@ -3,6 +3,7 @@
 The short version is in the [README](../README.md). This is the whole list.
 
 - **Clusters:** a start page with every context from your kubeconfig files.
+  - Settings can be opened from the start page (the gear at the top right, or ⌘,), before any cluster is open.
   - The highlighted block is the selected cluster, whose details are shown next to the list; the tick in its circle
     says which clusters are picked to open. The two are apart: a click on a block selects, a click on a circle ticks.
   - Add more kubeconfig files, or paste a kubeconfig.
@@ -135,7 +136,9 @@ The short version is in the [README](../README.md). This is the whole list.
   notice. The card can be put away with "Not now".
 - **A newer version is told, not installed** (Settings > About): once a day Kubedog asks github.com which version is
   the newest; nothing about you or your clusters is sent. When yours is older, the top bar says so, and Settings > About
-  gives the Homebrew line to run or opens the download page. One version can be skipped and the look can be switched
+  gives the Homebrew line to run or opens the download page. Where Homebrew installed Kubedog, an **Update with
+  Homebrew** button does it for you after a click: Homebrew reads its lists, updates Kubedog and nothing else, what it
+  says is shown, and a **Restart Kubedog** button starts the new one. One version can be skipped and the look can be switched
   off. After a look without an answer Kubedog waits a day before the next.
 - **Air-gapped** (Settings > About): a switch that makes Kubedog never ask the internet by itself, which today means
   it doesn't look for a new version. Kubedog switches it on by itself after three looks, a day apart, in which
@@ -168,8 +171,9 @@ The short version is in the [README](../README.md). This is the whole list.
   Cards per node, what needs a look, a heat timeline up to 7 days, and a page per node. Once Grafana shows a
   cluster's nodes, the notice that your account can't list nodes is no longer shown for that cluster. Set it up in
   Settings > Special monitoring: address, login, data source (Prometheus with node exporter figures), and your own
-  certificate authority (file, paste or drop). Reads only; certificates are always checked; the password
-  is asked for once per run and kept in memory only.
+  certificate authority (file, paste or drop). Reads only; certificates are always checked. The password is asked
+  for once per run and kept in memory only, or, with a tick, kept in the system's keychain once Grafana accepts it,
+  so it isn't asked again. It is never in the settings, and a settings file doesn't carry it or say that it's kept.
 - **Postgres (CloudNativePG):**
   - A page per cluster: a live replication map, health checks, write activity and lag, instances,
     backups and the window that can be restored, addresses, databases, roles, certificates.

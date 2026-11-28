@@ -22,15 +22,34 @@ pub(super) struct Conf {
     pub uid: String,
     /// Only series with this label, like `cluster="prod"`.
     pub label: String,
+    /// The password or token is in this computer's keychain (never in the settings file).
+    pub keep: bool,
+}
+
+/// The keychain's entry for a cluster's Grafana: named by the cluster, never by the address or the user.
+fn keychain(ctx: &str) -> Result<keyring::Entry, String> {
+    let h: String = ring::digest::digest(&ring::digest::SHA256, ctx.as_bytes()).as_ref().iter().take(12).map(|b| format!("{b:02x}")).collect();
+    keyring::Entry::new("kubedog", &format!("grafana-{h}")).map_err(|e| format!("The system's keychain: {e}"))
+}
+
+/// What goes into the keychain: the password with what it's for, so it's only used for that address and login.
+pub(super) fn kept_text(binding: &str, secret: &str) -> String {
+    serde_json::json!({"for": binding, "secret": secret}).to_string()
+}
+
+/// The password from the keychain's text, if it was kept for this address and login.
+pub(super) fn kept_secret(text: &str, binding: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(text).ok()?;
+    (v["for"].as_str() == Some(binding)).then(|| v["secret"].as_str().map(String::from)).flatten().filter(|s| !s.is_empty())
 }
 
 impl Conf {
     pub fn json(&self) -> Value {
-        serde_json::json!({"url": self.url, "user": self.user, "token": self.token, "ca": self.ca, "uid": self.uid, "label": self.label})
+        serde_json::json!({"url": self.url, "user": self.user, "token": self.token, "ca": self.ca, "uid": self.uid, "label": self.label, "keep": self.keep})
     }
     pub fn from_json(v: &Value) -> Conf {
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-        Conf { url: s("url"), user: s("user"), token: v["token"].as_bool().unwrap_or(false), ca: s("ca"), uid: s("uid"), label: s("label") }
+        Conf { url: s("url"), user: s("user"), token: v["token"].as_bool().unwrap_or(false), ca: s("ca"), uid: s("uid"), label: s("label"), keep: v["keep"].as_bool().unwrap_or(false) }
     }
     /// What a typed password is for: it's forgotten when any of this changes.
     fn binding(&self) -> String {
@@ -527,6 +546,14 @@ pub(super) struct Grafana {
     /// context -> (what it's for, the password or token). Memory only.
     secrets: HashMap<String, (String, Arc<Secret>)>,
     typed: HashMap<String, String>,
+    /// The tick "keep it in the keychain", per cluster, while it differs from what's saved.
+    keep: HashMap<String, bool>,
+    /// Logins to put in the keychain once Grafana has accepted them.
+    to_keep: HashSet<String>,
+    /// Read from the keychain by a thread: context -> (what it's for, the password if there was one).
+    kept: Arc<std::sync::Mutex<HashMap<String, (String, Option<String>)>>>,
+    /// The keychain was asked for these (context and what it's for), once per run.
+    kept_asked: HashSet<String>,
     /// The machine whose page is open: (context, instance).
     pub sel: Option<(String, String)>,
     window: Option<usize>,
@@ -560,6 +587,20 @@ impl KubedogApp {
     }
 
     fn grafana_forget(&mut self, ctx: &str) {
+        // Out of the keychain too, when it was kept there.
+        if self.prefs.grafana.get(ctx).map(|c| c.keep).unwrap_or(false) && self.screenshot.is_none() {
+            if let Some(c) = self.prefs.grafana.get_mut(ctx) {
+                c.keep = false;
+            }
+            if let Some(e) = self.grafana.edit.get_mut(ctx) {
+                e.keep = false;
+            }
+            self.save();
+            let c = ctx.to_string();
+            std::thread::spawn(move || keychain(&c).and_then(|e| e.delete_credential().map_err(|e| e.to_string())));
+        }
+        self.grafana.keep.remove(ctx);
+        self.grafana.to_keep.remove(ctx);
         self.grafana.secrets.remove(ctx);
         self.grafana.typed.remove(ctx);
         self.grafana.state.remove(ctx);
@@ -609,6 +650,7 @@ impl KubedogApp {
             return;
         }
         for c in self.active.clone() {
+            self.grafana_from_keychain(&c);
             if self.grafana_conf(&c).map(|x| x.uid.is_empty()).unwrap_or(true) || !self.wants_grafana(&c) || self.grafana_secret(&c).is_none() {
                 continue;
             }
@@ -653,6 +695,38 @@ impl KubedogApp {
                 );
             }
         }
+    }
+
+    /// A login kept in the keychain: asked for once per run, in a thread (the system may ask the person), and
+    /// taken when it's there and was kept for the address and login that are set now.
+    fn grafana_from_keychain(&mut self, ctx: &str) {
+        if self.screenshot.is_some() {
+            return;
+        }
+        let Some(conf) = self.grafana_conf(ctx).filter(|c| c.keep).cloned() else { return };
+        let binding = conf.binding();
+        if let Some((b, pw)) = self.grafana.kept.lock().ok().and_then(|mut k| k.remove(ctx)) {
+            if let Some(pw) = pw.filter(|_| b == binding && !self.grafana.secrets.contains_key(ctx)) {
+                self.grafana.secrets.insert(ctx.to_string(), (binding.clone(), Arc::new(Secret(pw))));
+                // Without a data source yet, listing them checks the login, as after typing it.
+                if conf.uid.is_empty() {
+                    self.grafana.state.insert(ctx.to_string(), Graf { loading: true, ..Default::default() });
+                    self.grafana_spawn(ctx, |c| Answer::Sources(c.sources()), |e| Answer::Sources(Err(e)));
+                }
+            }
+            return;
+        }
+        if self.grafana.secrets.contains_key(ctx) || !self.grafana.kept_asked.insert(format!("{ctx}\n{binding}")) {
+            return;
+        }
+        let (kept, c, egui) = (self.grafana.kept.clone(), ctx.to_string(), self.egui_ctx.clone());
+        std::thread::spawn(move || {
+            let pw = keychain(&c).ok().and_then(|e| e.get_password().ok()).and_then(|t| kept_secret(&t, &binding));
+            if let Ok(mut k) = kept.lock() {
+                k.insert(c, (binding, pw));
+            }
+            egui.request_repaint();
+        });
     }
 
     /// Test aid for screenshots: answers from a file (KUBEDOG_SHOT_GRAFANA) instead of a Grafana.
@@ -712,6 +786,13 @@ impl KubedogApp {
                     Ok(list) => {
                         g.fail = None;
                         g.sources = Some(list.clone());
+                        // Grafana took the login: now it can go in the keychain, if that was asked for.
+                        if self.grafana.to_keep.remove(ctx) {
+                            if let Some((b, s)) = self.grafana.secrets.get(ctx) {
+                                let (c, text) = (ctx.to_string(), kept_text(b, &s.0));
+                                std::thread::spawn(move || keychain(&c).and_then(|e| e.set_password(&text).map_err(|e| e.to_string())));
+                            }
+                        }
                         if let Some(c) = self.prefs.grafana.get_mut(ctx) {
                             if c.uid.is_empty() && !list.is_empty() {
                                 c.uid = list[0].1.clone();
@@ -737,6 +818,23 @@ impl KubedogApp {
         let Some(typed) = self.grafana.typed.remove(ctx).filter(|t| !t.is_empty()) else { return };
         self.grafana.state.insert(ctx.to_string(), Graf { loading: true, ..Default::default() });
         self.grafana.secrets.insert(ctx.to_string(), (conf.binding(), Arc::new(Secret(typed))));
+        // Kept in the keychain when ticked (once Grafana accepts it); taken out of it when unticked.
+        let keep = self.grafana.keep.remove(ctx).unwrap_or(conf.keep);
+        if keep {
+            self.grafana.to_keep.insert(ctx.to_string());
+        } else if conf.keep {
+            let c = ctx.to_string();
+            std::thread::spawn(move || keychain(&c).and_then(|e| e.delete_credential().map_err(|e| e.to_string())));
+        }
+        if keep != conf.keep {
+            if let Some(c) = self.prefs.grafana.get_mut(ctx) {
+                c.keep = keep;
+            }
+            if let Some(e) = self.grafana.edit.get_mut(ctx) {
+                e.keep = keep;
+            }
+            self.save();
+        }
         // Listing the data sources also checks the login, once.
         self.grafana_spawn(ctx, |c| Answer::Sources(c.sources()), |e| Answer::Sources(Err(e)));
     }
@@ -774,7 +872,11 @@ impl KubedogApp {
                 ui.spinner();
             }
         });
-        ui.label(RichText::new("Asked once each time Kubedog runs. It's kept in memory only, sent to this address only, and a refused login isn't tried again by itself.").size(z(11.5)).color(TEXT_PLACEHOLDER()));
+        let mut keep = self.grafana.keep.get(ctx).copied().unwrap_or(conf.keep);
+        if ui.checkbox(&mut keep, RichText::new("Keep it in the system's keychain").size(z(13.0))).changed() {
+            self.grafana.keep.insert(ctx.to_string(), keep);
+        }
+        ui.add(egui::Label::new(RichText::new(if keep { "Kept in this computer's keychain once Grafana accepts it, so it isn't asked again. It never goes into the settings or a settings file. It's sent to this address only, and a refused login isn't tried again by itself." } else { "Asked once each time Kubedog runs. It's kept in memory only, sent to this address only, and a refused login isn't tried again by itself." }).size(z(11.5)).color(TEXT_PLACEHOLDER())).wrap());
         if let Some(f) = fail {
             ui.add(egui::Label::new(RichText::new(f.text()).size(z(13.0)).color(DANGER())).wrap());
         }
@@ -1609,10 +1711,26 @@ mod tests {
     }
 
     #[test]
+    fn kept_for_one_address_and_login() {
+        let c = Conf { url: "https://g.example".into(), user: "me".into(), ..Default::default() };
+        let t = kept_text(&c.binding(), "made-up");
+        assert_eq!(kept_secret(&t, &c.binding()), Some("made-up".into()));
+        // Another address or login: not used.
+        assert_eq!(kept_secret(&t, &Conf { url: "https://other.example".into(), ..c.clone() }.binding()), None);
+        assert_eq!(kept_secret(&t, &Conf { user: "you".into(), ..c.clone() }.binding()), None);
+        assert_eq!(kept_secret("made-up", &c.binding()), None);
+        assert_eq!(kept_secret(&kept_text(&c.binding(), ""), &c.binding()), None);
+        // The settings only say that it's kept, never what.
+        let j = Conf { keep: true, ..c.clone() }.json();
+        assert!(j["keep"] == true && !j.to_string().contains("made-up") && Conf::from_json(&j).keep);
+        assert_eq!(Conf { keep: true, ..c.clone() }.binding(), c.binding());
+    }
+
+    #[test]
     fn nothing_secret_is_kept() {
         let c = Conf { url: "https://h".into(), user: "me".into(), ..Default::default() };
         let keys: Vec<String> = c.json().as_object().unwrap().keys().cloned().collect();
-        assert_eq!(keys.len(), 6);
+        assert_eq!(keys.len(), 7); // "keep" only says that the keychain has it
         assert!(!keys.iter().any(|k| k.contains("pass") || k.contains("secret")));
         assert_eq!(Conf::from_json(&c.json()), c);
         // Another address, user or certificate: another login.

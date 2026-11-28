@@ -405,7 +405,8 @@ impl KubedogApp {
     }
 
     pub(super) fn start_page(&mut self, ui: &mut Ui) {
-        let top = egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(ui.max_rect().width(), 28.0));
+        // The window is moved by its top edge; the Settings button at its right end stays a button.
+        let top = egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(ui.max_rect().width() - 90.0, 28.0));
         if ui.interact(top, egui::Id::new("start-drag"), Sense::drag()).drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
@@ -646,8 +647,16 @@ impl KubedogApp {
 
         // ----- right: details and files -----
         ui.scope_builder(egui::UiBuilder::new().max_rect(right.shrink2(egui::vec2(40.0, 0.0))), |ui| {
+            // Settings can be reached before a cluster is open.
+            ui.add_space(u(8.0));
+            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 30.0), Layout::right_to_left(Align::Center), |ui| {
+                let typing = ui.ctx().memory(|m| m.focused().is_some());
+                if columns::top_icon(ui, false, columns::draw_gear).on_hover_text("Settings (⌘,)").clicked() || (!typing && self.dialog.is_none() && ui.input(|i| i.modifiers.command && i.key_pressed(Key::Comma))) {
+                    self.start_settings = true;
+                }
+            });
             egui::ScrollArea::vertical().id_salt("start-right").auto_shrink([false, false]).show(ui, |ui| {
-                ui.add_space(40.0);
+                ui.add_space(2.0);
                 match &focused {
                     None => {
                         ui.label(RichText::new("No cluster selected").size(z(18.0)).color(TEXT_SUBTLE()));

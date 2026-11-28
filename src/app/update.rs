@@ -24,6 +24,42 @@ pub(super) struct Update {
     forced: Option<bool>,
     /// What the last try by hand said, for Settings.
     said: Option<(String, bool)>,
+    /// Homebrew updating Kubedog, after a click.
+    brew: Option<Brew>,
+}
+
+/// One run of Homebrew: what it says while it works, and how it ended.
+struct Brew {
+    out: Arc<Mutex<String>>,
+    done: Arc<Mutex<Option<bool>>>,
+}
+
+/// How far Homebrew is.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum BrewState {
+    No,
+    Running,
+    Done,
+    Failed,
+}
+
+/// What Homebrew is asked to do, one after the other: read its lists again (a version from today isn't in them
+/// yet), then update Kubedog and nothing else. Fixed words only; `line` is one of the two lines `how` gives.
+pub(super) fn brew_steps(line: &str) -> Vec<Vec<String>> {
+    let upgrade: Vec<String> = line.split_whitespace().skip(1).map(String::from).collect();
+    vec![vec!["update".into()], upgrade]
+}
+
+/// The end of a long text, from the start of a line.
+pub(super) fn tail(text: &str, lines: usize) -> String {
+    let l: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    l[l.len().saturating_sub(lines)..].join("\n")
+}
+
+/// The app to start again: the `.app` this program is in, if it is in one.
+pub(super) fn app_bundle(exe: &str) -> Option<&str> {
+    let i = exe.find("/Kubedog.app/")?;
+    Some(&exe[..i + "/Kubedog.app".len()])
 }
 
 /// How this Kubedog got here, which decides what "update" means.
@@ -249,6 +285,172 @@ impl KubedogApp {
         }
     }
 
+    fn brew_state(&self) -> BrewState {
+        if self.screenshot.is_some() {
+            return match std::env::var("KUBEDOG_SHOT_BREW").as_deref() {
+                Ok("running") => BrewState::Running,
+                Ok("done") => BrewState::Done,
+                Ok("failed") => BrewState::Failed,
+                _ => BrewState::No,
+            };
+        }
+        match self.update.brew.as_ref().map(|b| b.done.lock().ok().and_then(|d| *d)) {
+            None => BrewState::No,
+            Some(None) => BrewState::Running,
+            Some(Some(true)) => BrewState::Done,
+            Some(Some(false)) => BrewState::Failed,
+        }
+    }
+
+    /// Starts Homebrew, after a click. Never in a screenshot.
+    fn brew_start(&mut self, line: &'static str) {
+        if self.screenshot.is_some() || self.brew_state() == BrewState::Running {
+            return;
+        }
+        let run = Brew { out: Arc::new(Mutex::new(String::new())), done: Arc::new(Mutex::new(None)) };
+        let (out, done, ctx) = (run.out.clone(), run.done.clone(), self.egui_ctx.clone());
+        self.update.brew = Some(run);
+        let say = |out: &Arc<Mutex<String>>, t: &str| {
+            if let Ok(mut o) = out.lock() {
+                o.push_str(t);
+                o.push('\n');
+                // Only the end is shown; a long run doesn't pile up.
+                if o.len() > 40_000 {
+                    let cut = o.char_indices().map(|x| x.0).find(|i| *i >= o.len() - 20_000).unwrap_or(0);
+                    o.drain(..cut);
+                }
+            }
+        };
+        let Some(brew) = crate::kube::find_program("brew") else {
+            say(&out, "Homebrew (brew) wasn't found on this computer.");
+            if let Ok(mut d) = done.lock() {
+                *d = Some(false);
+            }
+            return;
+        };
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let mut ok = true;
+            for args in brew_steps(line) {
+                say(&out, &format!("brew {}", args.join(" ")));
+                let mut c = std::process::Command::new(&brew);
+                crate::kube::quiet(&mut c);
+                c.args(&args).env("PATH", crate::kube::child_path()).env("HOMEBREW_NO_ENV_HINTS", "1").env("HOMEBREW_NO_COLOR", "1").env("NONINTERACTIVE", "1");
+                c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+                let mut child = match c.spawn() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        say(&out, &format!("Homebrew couldn't be started: {e}"));
+                        ok = false;
+                        break;
+                    }
+                };
+                let readers: Vec<_> = [child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>)]
+                    .into_iter()
+                    .flatten()
+                    .map(|s| {
+                        let (out, ctx) = (out.clone(), ctx.clone());
+                        std::thread::spawn(move || {
+                            for l in std::io::BufReader::new(s).lines().map_while(Result::ok) {
+                                if let Ok(mut o) = out.lock() {
+                                    o.push_str(&l);
+                                    o.push('\n');
+                                }
+                                ctx.request_repaint();
+                            }
+                        })
+                    })
+                    .collect();
+                let status = child.wait();
+                for r in readers {
+                    let _ = r.join();
+                }
+                if !status.map(|s| s.success()).unwrap_or(false) {
+                    ok = false;
+                    break;
+                }
+            }
+            if let Ok(mut d) = done.lock() {
+                *d = Some(ok);
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// Starts Kubedog again (the newly installed one) and closes this one.
+    fn restart(&mut self) {
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let started = match app_bundle(&exe) {
+            Some(app) => std::process::Command::new("/usr/bin/open").args(["-n", app]).spawn(),
+            // Homebrew's own folder for the old version is gone; its link leads to the new one.
+            None => std::process::Command::new(crate::kube::find_program("kubedog").unwrap_or_else(|| exe.clone().into())).spawn(),
+        };
+        match started {
+            Ok(_) => self.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Err(e) => self.update.said = Some((format!("Kubedog couldn't be started again: {e}. Close it and open it yourself."), true)),
+        }
+    }
+
+    /// Where Homebrew installed Kubedog: a button that lets Homebrew update it, and the line to do it by hand.
+    fn settings_brew(&mut self, ui: &mut Ui, line: &'static str, airgapped: bool) {
+        let state = self.brew_state();
+        let by_hand = |ui: &mut Ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(line).monospace().size(z(13.0)).color(TEXT_DEFAULT()));
+                if button(ui, "Copy", false, false) {
+                    ui.ctx().copy_text(line.to_string());
+                }
+            });
+        };
+        match state {
+            BrewState::No if airgapped => {
+                settings::hint(ui, "Homebrew installed this Kubedog. Close Kubedog and run this in a terminal:");
+                by_hand(ui);
+            }
+            BrewState::No => {
+                settings::hint(ui, "Homebrew installed this Kubedog and can update it. It downloads the new version from GitHub and replaces this one; nothing else is updated. Kubedog keeps running meanwhile.");
+                ui.add_space(4.0);
+                if button(ui, "Update with Homebrew", true, false) {
+                    self.brew_start(line);
+                }
+                ui.add_space(6.0);
+                settings::hint(ui, "Or close Kubedog and run this in a terminal:");
+                by_hand(ui);
+            }
+            BrewState::Running => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Homebrew is updating Kubedog. This can take a few minutes.").color(TEXT_DEFAULT()));
+                });
+            }
+            BrewState::Done => {
+                work::said(ui, "Homebrew is done. The new Kubedog runs after a restart.", SUCCESS());
+                ui.add_space(6.0);
+                if button(ui, "Restart Kubedog", true, false) {
+                    self.restart();
+                }
+                if let Some((t, true)) = self.update.said.as_ref().filter(|s| !s.0.is_empty()) {
+                    ui.add_space(6.0);
+                    work::said(ui, t, WARNING());
+                }
+            }
+            BrewState::Failed => {
+                work::said(ui, "Homebrew didn't finish; nothing was changed by Kubedog. What it said is below. You can try again, or run the line in a terminal:", WARNING());
+                ui.add_space(6.0);
+                by_hand(ui);
+                ui.add_space(4.0);
+                if button(ui, "Try again", false, false) {
+                    self.brew_start(line);
+                }
+            }
+        }
+        let said = if self.screenshot.is_some() && state != BrewState::No { "brew update\nAlready up-to-date.\nbrew upgrade --cask kubedog-app\n==> Upgrading 1 outdated package".to_string() } else { self.update.brew.as_ref().and_then(|b| b.out.lock().ok().map(|o| tail(&o, 8))).unwrap_or_default() };
+        if !said.is_empty() {
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(RichText::new(said).monospace().size(z(11.5)).color(TEXT_MUTED())).wrap());
+        }
+    }
+
     /// Settings > About: the switch, what is known, and how to update.
     pub(super) fn settings_update(&mut self, ui: &mut Ui) {
         ui.add_space(10.0);
@@ -301,16 +503,9 @@ impl KubedogApp {
                     ui.add_space(6.0);
                     let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
                     let cask = ["/opt/homebrew/Caskroom/kubedog-app", "/usr/local/Caskroom/kubedog-app"].iter().any(|d| std::path::Path::new(d).is_dir());
-                    match how(&exe, cask) {
-                        How::Brew(line) => {
-                            settings::hint(ui, "Homebrew installed this Kubedog. Close Kubedog and run this in a terminal:");
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(line).monospace().size(z(13.0)).color(TEXT_DEFAULT()));
-                                if button(ui, "Copy", false, false) {
-                                    ui.ctx().copy_text(line.to_string());
-                                }
-                            });
-                        }
+                    let shot_brew = self.screenshot.is_some() && std::env::var("KUBEDOG_SHOT_BREW").is_ok();
+                    match if shot_brew { How::Brew("brew upgrade --cask kubedog-app") } else { how(&exe, cask) } {
+                        How::Brew(line) => self.settings_brew(ui, line, gap),
                         How::Page => {
                             settings::hint(ui, "The download page has the installer for Windows and the files for Linux and macOS. It opens in your browser.");
                             if button(ui, "Open the download page", true, false) {
@@ -350,6 +545,16 @@ impl KubedogApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_homebrew_is_asked() {
+        assert_eq!(brew_steps("brew upgrade --cask kubedog-app"), [vec!["update".to_string()], vec!["upgrade".into(), "--cask".into(), "kubedog-app".into()]]);
+        assert_eq!(brew_steps("brew upgrade kubedog")[1], ["upgrade", "kubedog"]);
+        assert_eq!(tail("a\n\nb\nc\n", 2), "b\nc");
+        assert_eq!(tail("", 3), "");
+        assert_eq!(app_bundle("/Applications/Kubedog.app/Contents/MacOS/kubedog"), Some("/Applications/Kubedog.app"));
+        assert_eq!(app_bundle("/opt/homebrew/Cellar/kubedog/0.9.0/bin/kubedog"), None);
+    }
 
     #[test]
     fn which_version_is_newer() {

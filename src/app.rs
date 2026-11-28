@@ -423,6 +423,8 @@ pub struct KubedogApp {
     paste_name: String,
     paste_open: bool,
     show_hidden: bool,
+    /// Settings is open on the start page, before any cluster is.
+    start_settings: bool,
     pings: HashMap<String, (bool, Result<String, String>)>,
     /// Keyboard focus on the start screen's grid.
     picker_focus: usize,
@@ -579,6 +581,7 @@ impl KubedogApp {
             paste_name: String::new(),
             paste_open: false,
             show_hidden: false,
+            start_settings: false,
             pings: HashMap::new(),
             picker_focus: 0,
             picker: HashSet::new(),
@@ -7358,7 +7361,7 @@ impl eframe::App for KubedogApp {
         if !self.connected {
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(BG_DEFAULT()))
-                .show(ui, |ui| self.start_page(ui));
+                .show(ui, |ui| if self.start_settings || (self.screenshot.is_some() && std::env::var("KUBEDOG_SHOT_START").as_deref() == Ok("settings")) { self.settings_at_start(ui) } else { self.start_page(ui) });
             self.dialogs(&ctx);
             self.toasts_ui(&ctx);
             return;

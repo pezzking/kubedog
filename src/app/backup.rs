@@ -23,6 +23,10 @@ pub(super) fn export_json(p: &Prefs) -> Value {
         m.retain(|k, _| !LOCAL.contains(&k.as_str()));
         // Only an Air-gapped chosen by hand travels: one Kubedog switched on by itself belongs to that computer.
         m.insert("airgapped".into(), (p.airgapped && !p.airgapped_auto).into());
+        // A Grafana password is in this computer's keychain, never in the settings: the file doesn't even say so.
+        for c in m.get_mut("grafana").and_then(|g| g.as_object_mut()).into_iter().flat_map(|g| g.values_mut()) {
+            c["keep"] = false.into();
+        }
     }
     let files: Vec<Value> = p.kubeconfigs.iter().filter(|f| !f.managed).map(|f| serde_json::json!({"path": f.path, "enabled": f.enabled})).collect();
     serde_json::json!({"kubedog_settings": 1, "version": env!("CARGO_PKG_VERSION"), "settings": s, "kubeconfig_files": files})
@@ -231,6 +235,12 @@ mod tests {
         gap["settings"]["airgapped_auto"] = true.into();
         let got = import_into(&here, &gap, &|_| false).unwrap().0;
         assert!(got.airgapped && !got.airgapped_auto);
+        // A Grafana login kept in the keychain: the file says nothing of it, and reading one never claims it.
+        let mut graf = Prefs::default();
+        graf.grafana.insert("shop".into(), grafana::Conf { url: "https://g.example".into(), user: "me".into(), keep: true, ..Default::default() });
+        let out = export_json(&graf);
+        assert_eq!(out["settings"]["grafana"]["shop"]["keep"], false);
+        assert!(!import_into(&Prefs::default(), &out, &|_| false).unwrap().0.grafana["shop"].keep);
         // Switched on by Kubedog itself, it stays with the computer it happened on.
         let mut auto = Prefs::default();
         (auto.airgapped, auto.airgapped_auto) = (true, true);
